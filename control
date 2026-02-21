@@ -1,0 +1,8 @@
+Package: com.yourcompany.fnmactweak
+Name: FnMacTweak
+Version: 2.0.1
+Architecture: iphoneos-arm
+Description: FnMacTweak
+Author: KohlerVG
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)

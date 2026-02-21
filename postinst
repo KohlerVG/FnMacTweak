@@ -1,0 +1,14 @@
+#!/bin/sh
+# postinst — runs automatically after every package install/upgrade
+# Writes the installed version into NSUserDefaults so FnMacTweak can
+# detect version bumps at runtime and re-show the welcome popup.
+
+PACKAGE="com.yourcompany.fnmactweak"
+VERSION=$(dpkg-query -f '${Version}' -W "$PACKAGE" 2>/dev/null)
+
+if [ -n "$VERSION" ]; then
+    # Write to the app's NSUserDefaults domain (Fortnite's bundle ID)
+    defaults write com.epicgames.fortnite fnmactweak.version "$VERSION"
+fi
+
+exit 0

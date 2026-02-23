@@ -3,6 +3,15 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.1] — February 2026
+
+### 🐛 Fixed
+- **Stuck left-click (UITouch & GC paths)** — Fixed a race condition in Build Mode where `leftClickSentToGame` was set to `YES` before the async GC press event fired. If the user released left-click during that window, the release handler would dispatch a GC button-up to the game before the GC press had landed, leaving the game with a stuck input. `leftClickSentToGame` is now set atomically inside the `dispatch_async` block, immediately after the GC press is sent, eliminating the race.
+- **"Don't Show Again" not persisting** — The welcome popup ignored the suppression preference on every launch. The `%ctor` version-gate was clearing `kWelcomeSeenVersion` on each update, wiping the flag. Added a separate `fnmactweak.welcomeSuppressed` key that is written by "Don't Show Again" and is intentionally never cleared by the version gate, so the preference survives updates permanently.
+- **Welcome popup never reshowing on version bump** — `postinst` was writing `fnmactweak.version` to `com.epicgames.fortnite` (wrong domain), so the key was never readable at runtime. `currentVersion` always fell back to the hardcoded `"2.0.0"`, meaning `kWelcomeSeenVersion` always matched and the popup never reshowed after updates. Fixed by writing to the correct domains (`com.epicgames.FortniteGame.57R7T7Q6F9` and `com.epicgames.FortniteGame.FC2QCLNL95`).
+
+---
+
 ## [2.0.0] — February 2026
 
 ### ✨ Added

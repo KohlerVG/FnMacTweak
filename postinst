@@ -7,8 +7,10 @@ PACKAGE="com.yourcompany.fnmactweak"
 VERSION=$(dpkg-query -f '${Version}' -W "$PACKAGE" 2>/dev/null)
 
 if [ -n "$VERSION" ]; then
-    # Write to the app's NSUserDefaults domain (Fortnite's bundle ID)
-    defaults write com.epicgames.fortnite fnmactweak.version "$VERSION"
+    # Write to all known Fortnite NSUserDefaults domains so the version
+    # key is present regardless of which container the app reads from.
+    defaults write com.epicgames.FortniteGame.57R7T7Q6F9 fnmactweak.version "$VERSION"
+    defaults write com.epicgames.FortniteGame.FC2QCLNL95 fnmactweak.version "$VERSION"
 fi
 
 exit 0

@@ -153,19 +153,19 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     };
     rebind_symbols(rebindings, 2);
 
-    // Version-based initialization for clean updates
-    // Version is written to NSUserDefaults by the postinst script from the control file.
-    // This means bumping the control file version is the single source of truth —
-    // no need to update anything in code.
-    NSString* currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.version"];
+    // Version-based initialization for clean updates.
+    // Prefer the version written by postinst, but fall back to the hardcoded
+    // build version so the bump is always detected even if postinst failed.
+    NSString* currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.version"] ?: @"2.0.1";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {
         // New install or version update detected
         // CLEAR custom keybinds (advanced remaps) for clean slate
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:kKeyRemapKey];
-        // Clear welcome flag so popup re-appears for this new version
+        // CLEAR all welcome popup suppression keys so it always reshows on version bump
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"fnmactweak.welcomeSeenVersion"];
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"fnmactweak.welcomeSuppressed"];
         // Record this version as seen so we don't repeat until next bump
         [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:@"fnmactweak.lastSeenVersion"];
     }
@@ -541,14 +541,16 @@ static void updateMouseLock(BOOL value) {
                     // Use the stored game handler to send GC press
                     // dispatch_async provides a small delay (~1-2ms) that allows the game to accept the event
                     // This is the ONLY way to seamlessly transition from UITouch to GC mode
+                    // IMPORTANT: leftClickSentToGame is set INSIDE the block so the release handler
+                    // cannot race ahead and send a GC release before the GC press has fired,
+                    // which would leave the game with a stuck button.
                     dispatch_async(dispatch_get_main_queue(), ^{
                         if (leftButtonGameHandler && leftButtonInput) {
                             // Send press event through the game's handler
                             leftButtonGameHandler(leftButtonInput, 1.0, YES);
+                            leftClickSentToGame = YES;
                         }
                     });
-                    
-                    leftClickSentToGame = YES;
                 }
             }
             

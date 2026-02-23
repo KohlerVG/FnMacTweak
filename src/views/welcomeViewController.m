@@ -341,8 +341,11 @@
 }
 
 - (void)dontShowAgainTapped {
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.version"] ?: @"2.0.0";
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.1";
     [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:kWelcomeSeenVersion];
+    // Store which version was suppressed. When the version bumps,
+    // this won't match and the popup will reshow once for the new version.
+    [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:@"fnmactweak.welcomeSuppressed"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     [self closeWelcomeWindow];
 }
@@ -371,9 +374,19 @@
 
 // ── C helper: show the welcome popup ─────────────────────────────
 void showWelcomePopupIfNeeded(void) {
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.version"] ?: @"2.0.0";
-    NSString *seenVersion = [[NSUserDefaults standardUserDefaults] stringForKey:kWelcomeSeenVersion];
+    // Use lastSeenVersion — written by %ctor on every install/update from the control
+    // file version. This is reliable even for users upgrading from 2.0.0 where
+    // fnmactweak.version was never written correctly due to the wrong bundle ID in postinst.
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.1";
 
+    // "Don't Show Again" suppression — only blocks if the suppressed version matches
+    // the current version. A version bump clears this automatically.
+    NSString *suppressedVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.welcomeSuppressed"];
+    if (suppressedVersion && [suppressedVersion isEqualToString:currentVersion]) {
+        return;
+    }
+
+    NSString *seenVersion = [[NSUserDefaults standardUserDefaults] stringForKey:kWelcomeSeenVersion];
     if (seenVersion && [seenVersion isEqualToString:currentVersion]) {
         return;
     }

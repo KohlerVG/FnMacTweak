@@ -28,13 +28,13 @@ FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on A
 - [Theos](https://theos.dev/docs/installation) (to build from source)
 
 ### Installation (Pre-built)
-Download the latest `.deb` from the [Releases](https://github.com/rt-someone/FnMacTweak/releases/) page and install it through Sideloadly in Advanced Options > Tweak Injection.
+Download the latest `.deb` from the [Releases](https://github.com/KohlerVG/FnMacTweak/releases/) page and install it through Sideloadly in Advanced Options > Tweak Injection.
 
 > **Welcome screen:** A welcome popup appears on first launch. Press **"Don't Show Again"** to dismiss it permanently for that version. It automatically re-appears whenever you install a new version, so you never miss what's changed.
 
 ### Building from Source
 ```bash
-git clone https://github.com/rt-someone/FnMacTweak.git
+git clone https://github.com/KohlerVG/FnMacTweak.git
 cd FnMacTweak
 make package FINALPACKAGE=1
 ```
@@ -150,8 +150,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a full version history and technical breakd
 
 ## 🏆 Credits
 
-- **[@rt2746](https://github.com/rt-someone)** — Original author
-- **[@kohlervg](https://github.com/kohlervg)** — Sensitivity system overhaul, Zero-Lag optimizations, & Robust Mouse Lock
+- **[@kohlervg](https://github.com/KohlerVG)** — Original author, sensitivity system overhaul, Zero-Lag optimizations, Robust Mouse Lock & resizable video popup
 - **[Facebook fishhook](https://github.com/facebook/fishhook)** — Used for `sysctl` hooking in a jailed environment
 - **[PlayCover / PlayTools](https://github.com/PlayCover/PlayTools)** — Inspiration for device model spoofing
 

@@ -3,6 +3,19 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.2] — February 2026
+
+### ✨ Added
+- **Resizable Quick Start video popup** — The tutorial video window can now be dragged anywhere on screen and resized from any edge or corner. Aspect ratio is locked to 16:9 during resize with a 400×225 minimum size. Correct macOS resize cursors appear on hover for each edge and corner.
+- **Shadow wrapper** — The video popup now renders a drop shadow outside its rounded-rect bounds for a polished floating appearance.
+- **Pass-through overlay** — Touches outside the video popup fall through to the game so Fortnite remains fully interactive while the video is open.
+
+### 🗑️ Removed
+- **`postinst` script** — Removed entirely. Version detection is now self-contained in `%ctor` — the current version is hardcoded directly in `Tweak.xm` and written to `fnmactweak.lastSeenVersion` at runtime. No post-install script needed.
+
+### 🐛 Fixed
+- **Quick Start video not loading** — The video popup now reliably loads and plays on first open. Previously, `AVPlayer` was sometimes called before the player item was attached, causing a permanently stalled state with no recovery path.
+
 ## [2.0.1] — February 2026
 
 ### 🐛 Fixed

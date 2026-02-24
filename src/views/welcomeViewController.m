@@ -341,7 +341,7 @@
 }
 
 - (void)dontShowAgainTapped {
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.1";
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.2";
     [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:kWelcomeSeenVersion];
     // Store which version was suppressed. When the version bumps,
     // this won't match and the popup will reshow once for the new version.
@@ -377,7 +377,7 @@ void showWelcomePopupIfNeeded(void) {
     // Use lastSeenVersion — written by %ctor on every install/update from the control
     // file version. This is reliable even for users upgrading from 2.0.0 where
     // fnmactweak.version was never written correctly due to the wrong bundle ID in postinst.
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.1";
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.2";
 
     // "Don't Show Again" suppression — only blocks if the suppressed version matches
     // the current version. A version bump clears this automatically.

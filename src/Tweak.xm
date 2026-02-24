@@ -154,9 +154,9 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     rebind_symbols(rebindings, 2);
 
     // Version-based initialization for clean updates.
-    // Prefer the version written by postinst, but fall back to the hardcoded
-    // build version so the bump is always detected even if postinst failed.
-    NSString* currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.version"] ?: @"2.0.1";
+    // The version is hardcoded here — no postinst needed. %ctor writes
+    // fnmactweak.lastSeenVersion itself, so version bumps are always detected.
+    NSString* currentVersion = @"2.0.2";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {

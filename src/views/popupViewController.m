@@ -41,6 +41,7 @@
 #import <AVKit/AVKit.h>
 #import <SafariServices/SafariServices.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 
 // ─────────────────────────────────────────────────────────────────
 //  FnVideoPlayerPopup & helpers
@@ -792,10 +793,28 @@ static void FnAnimatePress(UIView *v, BOOL down) {
 + (instancetype)sharedInstance;
 - (void)presentWithURL:(NSURL *)url inWindow:(UIWindow *)sourceWindow;
 - (void)dismiss;
+- (void)layoutResizeHandles:(UIView *)container;
+- (void)addResizeHandlesToContainer:(UIView *)container;
+- (void)handleDrag:(UIPanGestureRecognizer *)gr;
+- (void)handleResize:(UIPanGestureRecognizer *)gr;
+- (void)pushNSCursor:(NSString *)selName;
+- (void)popNSCursor;
 
 @end
 
 // -----------------------------------------------------------------------------
+// FnPassthroughView — passes touches outside the player container through to
+// underlying windows so the game remains fully interactive.
+// -----------------------------------------------------------------------------
+@interface FnPassthroughView : UIView
+@end
+@implementation FnPassthroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+  UIView *hit = [super hitTest:point withEvent:event];
+  return (hit == self) ? nil : hit;
+}
+@end
+
 // FnVideoRootViewController — handles ESC key to close the popup
 // -----------------------------------------------------------------------------
 @interface FnVideoRootViewController : UIViewController
@@ -807,6 +826,12 @@ static void FnAnimatePress(UIView *v, BOOL down) {
 // IOSViewController (the game).
 - (BOOL)prefersPointerLocked {
   return NO;
+}
+
+// Use pass-through view so touches outside the player fall through to the game.
+- (void)loadView {
+  FnPassthroughView *v = [[FnPassthroughView alloc] init];
+  self.view = v;
 }
 
 // Allow interaction with controls
@@ -846,110 +871,121 @@ static void FnAnimatePress(UIView *v, BOOL down) {
 }
 
 - (void)presentWithURL:(NSURL *)url inWindow:(UIWindow *)sourceWindow {
-  // Configure Audio Session
-  // Note: AVAudioSession might be unavailable or not needed on macOS Catalyst
-  // for this purpose. Commenting out to prevent build errors.
-  /*
-  [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback
-  error:nil];
-  [[AVAudioSession sharedInstance] setActive:YES error:nil];
-  */
-
   // 1. Lazy Load Window (Persistent)
   if (!self.videoWindow) {
     UIWindowScene *scene = (UIWindowScene *)sourceWindow.windowScene;
-    if (!scene)
-      return;
+    if (!scene) return;
 
     self.videoWindow = [[FnOverlayWindow alloc] initWithWindowScene:scene];
     self.videoWindow.windowLevel = UIWindowLevelAlert + 10;
     self.videoWindow.backgroundColor = [UIColor clearColor];
 
-    FnVideoRootViewController *rootVC =
-        [[FnVideoRootViewController alloc] init];
+    FnVideoRootViewController *rootVC = [[FnVideoRootViewController alloc] init];
     self.videoWindow.rootViewController = rootVC;
 
-    // Create UI hierarchy once
     [self setupPersistentUI];
   }
 
-  // 2. Reset State & Show
-  // Show without makeKeyAndVisible — stealing key-window status breaks pointer
-  // lock because UIKit re-queries prefersPointerLocked on the key window's VC,
-  // which is FnVideoRootViewController (not the game's IOSViewController).
-  self.videoWindow.hidden = NO;
+  // 2. Re-center the window (user may have dragged it last time).
+  UIView *wrapper = objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
+  UIView *animTarget = wrapper ?: self.playerContainer;
+  [animTarget.layer removeAllAnimations];
 
-  self.overlayView.alpha = 0.0;
-  self.playerContainer.transform = CGAffineTransformMakeScale(0.8, 0.8);
-  self.playerContainer.alpha = 0.0;
+  CGFloat W = 1000, H = W * 9.0 / 16.0;
+  UIWindowScene *ws = (UIWindowScene *)self.videoWindow.windowScene;
+  CGRect sb = ws ? ws.effectiveGeometry.coordinateSpace.bounds : self.videoWindow.bounds;
+  animTarget.transform = CGAffineTransformIdentity;
+  animTarget.frame = CGRectMake(floor((sb.size.width - W) / 2.0),
+                                floor((sb.size.height - H) / 2.0), W, H);
+  if (wrapper)
+    wrapper.layer.shadowPath =
+        [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, W, H) cornerRadius:12].CGPath;
+  self.playerContainer.frame = CGRectMake(0, 0, W, H);
+  [self layoutResizeHandles:wrapper ?: self.playerContainer];
 
-  // 3. Setup Player Item — detach/re-attach so controls bar observes the new
-  // item
+  // 3. Setup Player Item — detach/re-attach so controls bar observes the new item.
+  //    *** Video loading is exactly as in v2.0.1 — untouched. ***
   [self.customPlayerView.controlsBar detachFromPlayer];
   AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
-  // Prefer forward buffer of 10 s; cap peak bitrate to avoid memory spikes
   item.preferredForwardBufferDuration = 10.0;
   [self.player replaceCurrentItemWithPlayerItem:item];
   [self.customPlayerView.controlsBar attachToPlayer:self.player];
   self.customPlayerView.controlsBar.scrubber.value = 0.0;
   [self.customPlayerView showControlsAnimated:NO];
 
-  // 4. Animate In — spring scale with overlay fade
+  // 4. Show window and animate in.
+  self.videoWindow.hidden = NO;
+  animTarget.alpha = 0.0;
+  animTarget.transform = CGAffineTransformMakeScale(0.8, 0.8);
   [UIView animateWithDuration:0.38
       delay:0
       usingSpringWithDamping:0.72
       initialSpringVelocity:0.3
       options:UIViewAnimationOptionAllowUserInteraction
-      animations:^{
-        self.overlayView.alpha = 1.0;
-        self.playerContainer.transform = CGAffineTransformIdentity;
-        self.playerContainer.alpha = 1.0;
-      }
+      animations:^{ animTarget.transform = CGAffineTransformIdentity; animTarget.alpha = 1.0; }
       completion:^(BOOL finished) {
         [self.player play];
       }];
 }
 
 - (void)setupPersistentUI {
-  // A. Dimmed Overlay
+  // A. Transparent overlay — no dimming, floats freely like PiP.
+  //    Covers full screen to capture gestures; pass-through view lets
+  //    touches outside the player fall through to the game.
   self.overlayView = [[UIView alloc] initWithFrame:self.videoWindow.bounds];
-  self.overlayView.backgroundColor =
-      [UIColor colorWithWhite:0.0 alpha:0.75]; // Set color once
-  self.overlayView.alpha = 0.0;                // Start hidden
+  self.overlayView.backgroundColor = [UIColor clearColor];
+  self.overlayView.alpha = 1.0;
   self.overlayView.autoresizingMask =
       UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  self.overlayView.userInteractionEnabled = NO;
   [self.videoWindow.rootViewController.view addSubview:self.overlayView];
 
-  // Tap background to dismiss
-  UITapGestureRecognizer *tap =
-      [[UITapGestureRecognizer alloc] initWithTarget:self
-                                              action:@selector(dismiss)];
-  [self.overlayView addGestureRecognizer:tap];
-
-  // B. Player Container
-  CGFloat w = 1100;
+  // B. Player Container — centered 16:9, 1000 pt wide
+  CGFloat w = 1000;
   CGFloat h = w * 9.0 / 16.0;
-  CGRect screenBounds = self.videoWindow.bounds;
+  UIWindowScene *scene = (UIWindowScene *)self.videoWindow.windowScene;
+  CGRect screenBounds = scene
+      ? scene.effectiveGeometry.coordinateSpace.bounds
+      : self.videoWindow.bounds;
 
-  self.playerContainer = [[UIView alloc]
-      initWithFrame:CGRectMake((screenBounds.size.width - w) / 2.0,
-                               (screenBounds.size.height - h) / 2.0, w, h)];
+  // Outer shadow wrapper — masksToBounds=NO so shadow renders outside bounds
+  CGFloat ox = floor((screenBounds.size.width  - w) / 2.0);
+  CGFloat oy = floor((screenBounds.size.height - h) / 2.0);
+  UIView *shadowWrapper = [[UIView alloc] initWithFrame:CGRectMake(ox, oy, w, h)];
+  shadowWrapper.backgroundColor = [UIColor clearColor];
+  shadowWrapper.layer.shadowColor   = [UIColor blackColor].CGColor;
+  shadowWrapper.layer.shadowOpacity = 0.55;
+  shadowWrapper.layer.shadowRadius  = 20;
+  shadowWrapper.layer.shadowOffset  = CGSizeMake(0, 6);
+  shadowWrapper.layer.shadowPath    =
+      [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, w, h)
+                                 cornerRadius:12].CGPath;
+  [self.videoWindow.rootViewController.view addSubview:shadowWrapper];
+
+  // Inner container — masksToBounds=YES clips video and controls to rounded rect
+  self.playerContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
   self.playerContainer.backgroundColor = [UIColor blackColor];
   self.playerContainer.layer.cornerRadius = 12;
   self.playerContainer.layer.masksToBounds = YES;
   self.playerContainer.layer.borderWidth = 1.0;
   self.playerContainer.layer.borderColor =
       [UIColor colorWithWhite:0.2 alpha:1.0].CGColor;
-  self.playerContainer.autoresizingMask =
-      UIViewAutoresizingFlexibleLeftMargin |
-      UIViewAutoresizingFlexibleRightMargin |
-      UIViewAutoresizingFlexibleTopMargin |
-      UIViewAutoresizingFlexibleBottomMargin;
-  [self.videoWindow.rootViewController.view addSubview:self.playerContainer];
+  [shadowWrapper addSubview:self.playerContainer];
+
+  // Store shadow wrapper so drag/resize can move it together
+  objc_setAssociatedObject(self.playerContainer, "shadowWrapper",
+                           shadowWrapper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+  // Drag to move
+  UIPanGestureRecognizer *drag = [[UIPanGestureRecognizer alloc]
+      initWithTarget:self action:@selector(handleDrag:)];
+  drag.minimumNumberOfTouches = 1;
+  [self.playerContainer addGestureRecognizer:drag];
+
+  // Resize handles on shadowWrapper — outside masksToBounds clip
+  [self addResizeHandlesToContainer:shadowWrapper];
 
   // C. AVPlayer & Custom Player View
-  //    Close button is now owned by FnCustomPlayerView (consistent liquid glass
-  //    pill style)
   self.player = [[AVPlayer alloc] init];
   self.player.allowsExternalPlayback = NO;
 
@@ -976,8 +1012,6 @@ static void FnAnimatePress(UIView *v, BOOL down) {
       UIViewAutoresizingFlexibleRightMargin;
   self.bufferingSpinner.hidesWhenStopped = YES;
   [self.playerContainer addSubview:self.bufferingSpinner];
-  // Do NOT start animating here — the KVO observer will show it only when truly
-  // buffering
 
   // Observer
   [self.player addObserver:self
@@ -1020,9 +1054,8 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   [self.player pause];
   [self.player replaceCurrentItemWithPlayerItem:nil];
 
-  void (^completionBlock)(BOOL) = ^(BOOL finished) {
-    self.videoWindow.hidden = YES;
-  };
+  UIView *wrapper = objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
+  UIView *animTarget = wrapper ?: self.playerContainer;
 
   if (animated) {
     [UIView animateWithDuration:0.25
@@ -1031,17 +1064,178 @@ static void FnAnimatePress(UIView *v, BOOL down) {
           initialSpringVelocity:0.2
                         options:UIViewAnimationOptionAllowUserInteraction
                      animations:^{
-                       self.overlayView.alpha = 0.0;
-                       self.playerContainer.transform =
-                           CGAffineTransformMakeScale(0.88, 0.88);
-                       self.playerContainer.alpha = 0.0;
+                       animTarget.transform = CGAffineTransformMakeScale(0.88, 0.88);
+                       animTarget.alpha = 0.0;
                      }
-                     completion:completionBlock];
+                     completion:^(BOOL finished) {
+                       self.videoWindow.hidden = YES;
+                       animTarget.transform = CGAffineTransformIdentity;
+                       animTarget.alpha = 1.0;
+                     }];
   } else {
-    self.overlayView.alpha = 0.0;
-    self.playerContainer.alpha = 0.0;
-    completionBlock(YES);
+    self.videoWindow.hidden = YES;
   }
+}
+
+// ── Drag to move ──────────────────────────────────────────────────────────────
+- (void)handleDrag:(UIPanGestureRecognizer *)gr {
+  UIView *container = self.playerContainer;
+  UIView *wrapper = objc_getAssociatedObject(container, "shadowWrapper");
+  UIView *parent = wrapper ? wrapper.superview : container.superview;
+  UIView *moving = wrapper ?: container;
+  if (!parent) return;
+
+  CGPoint delta = [gr translationInView:parent];
+  CGRect f = moving.frame;
+  f.origin.x += delta.x;
+  f.origin.y += delta.y;
+
+  CGRect sb = parent.bounds;
+  f.origin.x = MAX(0, MIN(sb.size.width  - f.size.width,  f.origin.x));
+  f.origin.y = MAX(0, MIN(sb.size.height - f.size.height, f.origin.y));
+
+  moving.frame = f;
+  [gr setTranslation:CGPointZero inView:parent];
+}
+
+// ── Resize handle setup ───────────────────────────────────────────────────────
+- (void)addResizeHandlesToContainer:(UIView *)container {
+  NSArray *configs = @[
+    @[@1,  @"resizeUpDownCursor"],
+    @[@2,  @"resizeUpDownCursor"],
+    @[@4,  @"resizeLeftRightCursor"],
+    @[@8,  @"resizeLeftRightCursor"],
+    @[@5,  @"_windowResizeNorthWestSouthEastCursor"],
+    @[@9,  @"_windowResizeNorthEastSouthWestCursor"],
+    @[@6,  @"_windowResizeNorthEastSouthWestCursor"],
+    @[@10, @"_windowResizeNorthWestSouthEastCursor"],
+  ];
+  for (NSArray *cfg in configs) {
+    UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
+    handle.backgroundColor = [UIColor clearColor];
+    handle.tag = [cfg[0] integerValue];
+    objc_setAssociatedObject(handle, "nsCursorSel", cfg[1],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UIPanGestureRecognizer *rp = [[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(handleResize:)];
+    [handle addGestureRecognizer:rp];
+    if (@available(iOS 13.4, *)) {
+      UIHoverGestureRecognizer *hover = [[UIHoverGestureRecognizer alloc]
+          initWithTarget:self action:@selector(handleResizeHandleHover:)];
+      [handle addGestureRecognizer:hover];
+    }
+    [container addSubview:handle];
+  }
+  [self layoutResizeHandles:container];
+}
+
+- (void)pushNSCursor:(NSString *)selName {
+  Class cls = NSClassFromString(@"NSCursor");
+  if (!cls) return;
+  SEL getSel = NSSelectorFromString(selName);
+  IMP getImp = [cls methodForSelector:getSel];
+  if (!getImp) return;
+  id cursor = ((id (*)(id, SEL))getImp)(cls, getSel);
+  if (!cursor) return;
+  SEL pushSel = NSSelectorFromString(@"push");
+  IMP pushImp = [cursor methodForSelector:pushSel];
+  if (pushImp) ((void (*)(id, SEL))pushImp)(cursor, pushSel);
+}
+
+- (void)popNSCursor {
+  Class cls = NSClassFromString(@"NSCursor");
+  if (!cls) return;
+  SEL popSel = NSSelectorFromString(@"pop");
+  IMP popImp = [cls methodForSelector:popSel];
+  if (popImp) ((void (*)(id, SEL))popImp)(cls, popSel);
+}
+
+- (void)handleResizeHandleHover:(UIHoverGestureRecognizer *)hover
+    API_AVAILABLE(ios(13.4)) {
+  UIView *handle = hover.view;
+  NSString *cursorSel = objc_getAssociatedObject(handle, "nsCursorSel");
+  if (hover.state == UIGestureRecognizerStateBegan) {
+    [self pushNSCursor:cursorSel];
+  } else if (hover.state == UIGestureRecognizerStateEnded ||
+             hover.state == UIGestureRecognizerStateCancelled) {
+    [self popNSCursor];
+  }
+}
+
+- (void)layoutResizeHandles:(UIView *)container {
+  CGFloat e = 16.0;
+  CGFloat w = container.bounds.size.width;
+  CGFloat h = container.bounds.size.height;
+  for (UIView *handle in container.subviews) {
+    if (handle.tag == 0) continue;
+    NSInteger t = handle.tag;
+    BOOL top    = (t & 1) != 0;
+    BOOL bottom = (t & 2) != 0;
+    BOOL left   = (t & 4) != 0;
+    BOOL right  = (t & 8) != 0;
+    CGFloat x  = left ? 0 : (right ? w - e : e);
+    CGFloat y  = top  ? 0 : (bottom ? h - e : e);
+    CGFloat fw = (left || right) ? e : w - e * 2;
+    CGFloat fh = (top || bottom) ? e : h - e * 2;
+    handle.frame = CGRectMake(x, y, fw, fh);
+  }
+}
+
+- (void)handleResize:(UIPanGestureRecognizer *)gr {
+  UIView *handle  = (UIView *)gr.view;
+  UIView *wrapper = handle.superview;
+  UIView *parent  = wrapper.superview;
+  if (!parent) return;
+
+  static CGRect startFrame;
+  if (gr.state == UIGestureRecognizerStateBegan) {
+    startFrame = wrapper.frame;
+    return;
+  }
+
+  CGPoint delta = [gr translationInView:parent];
+  CGRect f = startFrame;
+  NSInteger t = handle.tag;
+  BOOL top    = (t & 1) != 0;
+  BOOL bottom = (t & 2) != 0;
+  BOOL left   = (t & 4) != 0;
+  BOOL right  = (t & 8) != 0;
+
+  static const CGFloat kAspect = 16.0 / 9.0;
+  if (left || right) {
+    if (left)  { f.origin.x += delta.x; f.size.width  -= delta.x; }
+    if (right) { f.size.width  += delta.x; }
+    f.size.height = f.size.width / kAspect;
+    if (top) f.origin.y = startFrame.origin.y + startFrame.size.height - f.size.height;
+  } else {
+    if (top)    { f.origin.y += delta.y; f.size.height -= delta.y; }
+    if (bottom) { f.size.height += delta.y; }
+    f.size.width = f.size.height * kAspect;
+    if (left) f.origin.x = startFrame.origin.x + startFrame.size.width - f.size.width;
+  }
+
+  CGFloat minW = 400, minH = 225;
+  if (f.size.width  < minW) { f.size.width  = minW; f.size.height = minW / kAspect; }
+  if (f.size.height < minH) { f.size.height = minH; f.size.width  = minH * kAspect; }
+
+  CGRect sb = parent.bounds;
+  f.origin.x = MAX(0, MIN(sb.size.width  - f.size.width,  f.origin.x));
+  f.origin.y = MAX(0, MIN(sb.size.height - f.size.height, f.origin.y));
+
+  wrapper.frame = f;
+  wrapper.layer.shadowPath =
+      [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, f.size.width, f.size.height)
+                                 cornerRadius:12].CGPath;
+  self.playerContainer.frame = CGRectMake(0, 0, f.size.width, f.size.height);
+  [self layoutResizeHandles:wrapper];
+
+  FnCustomPlayerView *pv = (FnCustomPlayerView *)self.customPlayerView;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  pv.playerLayer.frame = pv.bounds;
+  [CATransaction commit];
+  [pv setNeedsLayout];
+  [pv layoutIfNeeded];
 }
 
 @end

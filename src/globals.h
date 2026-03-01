@@ -13,6 +13,7 @@
 #define kScopeXKey @"scopeSensitivityX"
 #define kScopeYKey @"scopeSensitivityY"
 #define kScaleKey @"macOSToPCScale"
+#define kInvertYKey @"invertYAxis"
 #define kKeyRemapKey @"keyRemappings"
 #define kBuildModeKey @"buildModeEnabled"
 #define kRedDotPositionKey @"redDotPosition"
@@ -37,6 +38,7 @@ extern float LOOK_SENSITIVITY_X;          // Look Sensitivity X - Hip-fire (stan
 extern float LOOK_SENSITIVITY_Y;          // Look Sensitivity Y - Hip-fire (standard: 45%)
 extern float SCOPE_SENSITIVITY_X;         // Scope Sensitivity X - ADS (standard: 45%)
 extern float SCOPE_SENSITIVITY_Y;         // Scope Sensitivity Y - ADS (standard: 45%)
+extern BOOL INVERT_Y_AXIS;                // Invert vertical camera look
 
 // macOS to PC conversion scale
 extern float MACOS_TO_PC_SCALE;           // Conversion factor (optimal: 34.72 for 1.0 effective)

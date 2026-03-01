@@ -17,6 +17,7 @@ float LOOK_SENSITIVITY_X = 50.0f;          // Look Sensitivity X (hip-fire) (rec
 float LOOK_SENSITIVITY_Y = 50.0f;          // Look Sensitivity Y (hip-fire) (recommended: 50%)
 float SCOPE_SENSITIVITY_X = 50.0f;         // Scope Sensitivity X (ADS) (recommended: 50%)
 float SCOPE_SENSITIVITY_Y = 50.0f;         // Scope Sensitivity Y (ADS) (recommended: 50%)
+BOOL INVERT_Y_AXIS = NO;                   // Invert vertical look direction
 
 // macOS to PC conversion scale
 // This factor converts macOS mouse deltas to match PC input scale

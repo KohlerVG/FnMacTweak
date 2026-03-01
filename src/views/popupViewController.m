@@ -1442,6 +1442,7 @@ static void loadSettings() {
     SCOPE_SENSITIVITY_X = [settings[kScopeXKey] floatValue] ?: 50.0f;
     SCOPE_SENSITIVITY_Y = [settings[kScopeYKey] floatValue] ?: 50.0f;
     MACOS_TO_PC_SCALE = [settings[kScaleKey] floatValue] ?: 20.0f;
+    INVERT_Y_AXIS = [settings[kInvertYKey] boolValue];
 
     // CRITICAL: Recalculate pre-computed sensitivities after loading
     recalculateSensitivities();
@@ -1543,6 +1544,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 @property UITextField *scopeXField;
 @property UITextField *scopeYField;
 @property UITextField *scaleField;
+@property UISwitch *invertYSwitch;
 @property UILabel *feedbackLabel;
 @property UIScrollView *scrollView;
 
@@ -1553,6 +1555,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 @property float originalScopeX;
 @property float originalScopeY;
 @property float originalScale;
+@property BOOL originalInvertY;
 
 // Key remapping fields
 @property NSMutableArray *keyRemapRows;
@@ -1610,6 +1613,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   self.originalScopeX = SCOPE_SENSITIVITY_X;
   self.originalScopeY = SCOPE_SENSITIVITY_Y;
   self.originalScale = MACOS_TO_PC_SCALE;
+  self.originalInvertY = INVERT_Y_AXIS;
 
   // Cache Fortnite actions array for performance (created once, reused many
   // times)
@@ -2059,6 +2063,52 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                          ]
                        isDouble:YES
                          toView:self.sensitivityTab];
+
+  // ========================================
+  // VERTICAL LOOK DIRECTION SECTION
+  // ========================================
+  UIView *invertSection = [[UIView alloc]
+      initWithFrame:CGRectMake(leftMargin, y, contentWidth, 88)];
+  invertSection.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
+  invertSection.layer.cornerRadius = 8;
+  invertSection.layer.borderWidth = 0.5;
+  invertSection.layer.borderColor =
+      [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
+  [self.sensitivityTab addSubview:invertSection];
+
+  UILabel *invertTitle =
+      [[UILabel alloc] initWithFrame:CGRectMake(12, 10, contentWidth - 24, 18)];
+  invertTitle.text = @"Vertical Look Direction";
+  invertTitle.textColor = [UIColor whiteColor];
+  invertTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+  [invertSection addSubview:invertTitle];
+
+  UILabel *invertSubtitle =
+      [[UILabel alloc] initWithFrame:CGRectMake(12, 30, contentWidth - 24, 14)];
+  invertSubtitle.text = @"Invert up/down camera movement";
+  invertSubtitle.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+  invertSubtitle.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
+  [invertSection addSubview:invertSubtitle];
+
+  UILabel *invertLabel = [[UILabel alloc]
+      initWithFrame:CGRectMake(12, 56, contentWidth - 100, 20)];
+  invertLabel.text = @"Invert Y-Axis";
+  invertLabel.textColor = [UIColor colorWithWhite:0.88 alpha:1.0];
+  invertLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+  [invertSection addSubview:invertLabel];
+
+  self.invertYSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+  [self.invertYSwitch sizeToFit];
+  self.invertYSwitch.on = INVERT_Y_AXIS;
+  self.invertYSwitch.frame = CGRectMake(contentWidth - 12 - self.invertYSwitch.bounds.size.width,
+                                        52,
+                                        self.invertYSwitch.bounds.size.width,
+                                        self.invertYSwitch.bounds.size.height);
+  [self.invertYSwitch addTarget:self
+                         action:@selector(invertYSwitchChanged:)
+               forControlEvents:UIControlEventValueChanged];
+  [invertSection addSubview:self.invertYSwitch];
+  y += 96;
 
   // ========================================
   // SCALE FACTOR SECTION (ADVANCED)
@@ -4701,6 +4751,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   float currentScopeX = [self.scopeXField.text floatValue];
   float currentScopeY = [self.scopeYField.text floatValue];
   float currentScale = [self.scaleField.text floatValue];
+  BOOL currentInvertY = self.invertYSwitch.isOn;
 
   // Compare with original values (using small epsilon for float comparison)
   float epsilon = 0.01f;
@@ -4709,7 +4760,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
           fabsf(currentLookY - self.originalLookY) > epsilon ||
           fabsf(currentScopeX - self.originalScopeX) > epsilon ||
           fabsf(currentScopeY - self.originalScopeY) > epsilon ||
-          fabsf(currentScale - self.originalScale) > epsilon);
+          fabsf(currentScale - self.originalScale) > epsilon ||
+          currentInvertY != self.originalInvertY);
 }
 
 // Revert sensitivity fields to original values
@@ -4726,6 +4778,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
       [NSString stringWithFormat:@"%.1f", self.originalScopeY];
   self.scaleField.text =
       [NSString stringWithFormat:@"%.1f", self.originalScale];
+  self.invertYSwitch.on = self.originalInvertY;
 
   // Restore global variables
   BASE_XY_SENSITIVITY = self.originalBaseXY;
@@ -4734,6 +4787,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   SCOPE_SENSITIVITY_X = self.originalScopeX;
   SCOPE_SENSITIVITY_Y = self.originalScopeY;
   MACOS_TO_PC_SCALE = self.originalScale;
+  INVERT_Y_AXIS = self.originalInvertY;
 
   recalculateSensitivities();
 }
@@ -4792,6 +4846,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   self.scopeXField.text = @"50.0";
   self.scopeYField.text = @"50.0";
   self.scaleField.text = @"20.0";
+  self.invertYSwitch.on = NO;
 
   BASE_XY_SENSITIVITY = 6.4f;
   LOOK_SENSITIVITY_X = 50.0f;
@@ -4799,6 +4854,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   SCOPE_SENSITIVITY_X = 50.0f;
   SCOPE_SENSITIVITY_Y = 50.0f;
   MACOS_TO_PC_SCALE = 20.0f;
+  INVERT_Y_AXIS = NO;
 
   recalculateSensitivities();
 
@@ -4808,7 +4864,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     kLookYKey : @(LOOK_SENSITIVITY_Y),
     kScopeXKey : @(SCOPE_SENSITIVITY_X),
     kScopeYKey : @(SCOPE_SENSITIVITY_Y),
-    kScaleKey : @(MACOS_TO_PC_SCALE)
+    kScaleKey : @(MACOS_TO_PC_SCALE),
+    kInvertYKey : @(INVERT_Y_AXIS)
   };
 
   [[NSUserDefaults standardUserDefaults] setObject:settings
@@ -4821,6 +4878,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   self.originalScopeX = SCOPE_SENSITIVITY_X;
   self.originalScopeY = SCOPE_SENSITIVITY_Y;
   self.originalScale = MACOS_TO_PC_SCALE;
+  self.originalInvertY = INVERT_Y_AXIS;
 
   // Update UI to reflect no changes
   [self updateSensitivityFieldBorders];
@@ -4852,6 +4910,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  self.scopeXField.text = @"50.0";
                                  self.scopeYField.text = @"50.0";
                                  self.scaleField.text = @"20.0";
+                                 self.invertYSwitch.on = NO;
 
                                  BASE_XY_SENSITIVITY = 6.4f;
                                  LOOK_SENSITIVITY_X = 50.0f;
@@ -4859,6 +4918,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  SCOPE_SENSITIVITY_X = 50.0f;
                                  SCOPE_SENSITIVITY_Y = 50.0f;
                                  MACOS_TO_PC_SCALE = 20.0f;
+                                 INVERT_Y_AXIS = NO;
 
                                  recalculateSensitivities();
 
@@ -4868,7 +4928,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                    kLookYKey : @(LOOK_SENSITIVITY_Y),
                                    kScopeXKey : @(SCOPE_SENSITIVITY_X),
                                    kScopeYKey : @(SCOPE_SENSITIVITY_Y),
-                                   kScaleKey : @(MACOS_TO_PC_SCALE)
+                                   kScaleKey : @(MACOS_TO_PC_SCALE),
+                                   kInvertYKey : @(INVERT_Y_AXIS)
                                  };
 
                                  [[NSUserDefaults standardUserDefaults]
@@ -4883,6 +4944,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  self.originalScopeX = SCOPE_SENSITIVITY_X;
                                  self.originalScopeY = SCOPE_SENSITIVITY_Y;
                                  self.originalScale = MACOS_TO_PC_SCALE;
+                                 self.originalInvertY = INVERT_Y_AXIS;
 
                                  // Update UI to reflect no changes
                                  [self updateSensitivityFieldBorders];
@@ -4908,6 +4970,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   SCOPE_SENSITIVITY_X = [self.scopeXField.text floatValue];
   SCOPE_SENSITIVITY_Y = [self.scopeYField.text floatValue];
   MACOS_TO_PC_SCALE = [self.scaleField.text floatValue];
+  INVERT_Y_AXIS = self.invertYSwitch.isOn;
 
   recalculateSensitivities();
 
@@ -4917,7 +4980,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     kLookYKey : @(LOOK_SENSITIVITY_Y),
     kScopeXKey : @(SCOPE_SENSITIVITY_X),
     kScopeYKey : @(SCOPE_SENSITIVITY_Y),
-    kScaleKey : @(MACOS_TO_PC_SCALE)
+    kScaleKey : @(MACOS_TO_PC_SCALE),
+    kInvertYKey : @(INVERT_Y_AXIS)
   };
 
   [[NSUserDefaults standardUserDefaults] setObject:settings
@@ -4930,6 +4994,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   self.originalScopeX = SCOPE_SENSITIVITY_X;
   self.originalScopeY = SCOPE_SENSITIVITY_Y;
   self.originalScale = MACOS_TO_PC_SCALE;
+  self.originalInvertY = INVERT_Y_AXIS;
 
   // Update UI to reflect no changes
   [self updateSensitivityFieldBorders];
@@ -5056,6 +5121,11 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   [self updateSensitivityFieldBorders];
 }
 
+- (void)invertYSwitchChanged:(UISwitch *)toggle {
+  (void)toggle;
+  [self updateSensitivityDiscardButton];
+}
+
 // Update discard sensitivity button based on changes
 - (void)updateSensitivityDiscardButton {
   int changeCount = 0;
@@ -5072,6 +5142,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   if (fabsf([self.scopeYField.text floatValue] - self.originalScopeY) > epsilon)
     changeCount++;
   if (fabsf([self.scaleField.text floatValue] - self.originalScale) > epsilon)
+    changeCount++;
+  if (self.invertYSwitch.isOn != self.originalInvertY)
     changeCount++;
 
   // Always update button titles (cheap string set)
@@ -5274,7 +5346,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     kLookYKey : @(LOOK_SENSITIVITY_Y),
     kScopeXKey : @(SCOPE_SENSITIVITY_X),
     kScopeYKey : @(SCOPE_SENSITIVITY_Y),
-    kScaleKey : @(MACOS_TO_PC_SCALE)
+    kScaleKey : @(MACOS_TO_PC_SCALE),
+    kInvertYKey : @(INVERT_Y_AXIS)
   };
   [[NSUserDefaults standardUserDefaults] setObject:settings
                                             forKey:kSettingsKey];
@@ -5303,7 +5376,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     @"lookY" : @(LOOK_SENSITIVITY_Y),
     @"scopeX" : @(SCOPE_SENSITIVITY_X),
     @"scopeY" : @(SCOPE_SENSITIVITY_Y),
-    @"scale" : @(MACOS_TO_PC_SCALE)
+    @"scale" : @(MACOS_TO_PC_SCALE),
+    @"invertY" : @(INVERT_Y_AXIS)
   };
 
   // Fortnite Default Keybinds (from keybinds tab - BUILDING, MOVEMENT, etc.)
@@ -5477,6 +5551,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
         SCOPE_SENSITIVITY_X = [sensitivity[@"scopeX"] floatValue] ?: 50.0f;
         SCOPE_SENSITIVITY_Y = [sensitivity[@"scopeY"] floatValue] ?: 50.0f;
         MACOS_TO_PC_SCALE = [sensitivity[@"scale"] floatValue] ?: 20.0f;
+        INVERT_Y_AXIS = [sensitivity[@"invertY"] boolValue];
 
         // Recalculate and save
         recalculateSensitivities();
@@ -5486,7 +5561,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
           kLookYKey : @(LOOK_SENSITIVITY_Y),
           kScopeXKey : @(SCOPE_SENSITIVITY_X),
           kScopeYKey : @(SCOPE_SENSITIVITY_Y),
-          kScaleKey : @(MACOS_TO_PC_SCALE)
+          kScaleKey : @(MACOS_TO_PC_SCALE),
+          kInvertYKey : @(INVERT_Y_AXIS)
         };
         [[NSUserDefaults standardUserDefaults] setObject:settings
                                                   forKey:kSettingsKey];
@@ -5504,6 +5580,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
             [NSString stringWithFormat:@"%.1f", SCOPE_SENSITIVITY_Y];
         self.scaleField.text =
             [NSString stringWithFormat:@"%.1f", MACOS_TO_PC_SCALE];
+        self.invertYSwitch.on = INVERT_Y_AXIS;
 
         // Update original values
         self.originalBaseXY = BASE_XY_SENSITIVITY;
@@ -5512,6 +5589,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
         self.originalScopeX = SCOPE_SENSITIVITY_X;
         self.originalScopeY = SCOPE_SENSITIVITY_Y;
         self.originalScale = MACOS_TO_PC_SCALE;
+        self.originalInvertY = INVERT_Y_AXIS;
 
         [self updateSensitivityDiscardButton];
         [self updateSensitivityFieldBorders];

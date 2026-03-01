@@ -24,6 +24,21 @@ static BOOL leftButtonIsPressed = NO;
 static BOOL rightButtonIsPressed = NO;
 static BOOL leftClickSentToGame = NO;
 
+static void restoreSettings(void) {
+    NSDictionary *settings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSettingsKey];
+    if (!settings) {
+        return;
+    }
+
+    BASE_XY_SENSITIVITY = [settings[kBaseXYKey] floatValue] ?: 6.4f;
+    LOOK_SENSITIVITY_X = [settings[kLookXKey] floatValue] ?: 50.0f;
+    LOOK_SENSITIVITY_Y = [settings[kLookYKey] floatValue] ?: 50.0f;
+    SCOPE_SENSITIVITY_X = [settings[kScopeXKey] floatValue] ?: 50.0f;
+    SCOPE_SENSITIVITY_Y = [settings[kScopeYKey] floatValue] ?: 50.0f;
+    MACOS_TO_PC_SCALE = [settings[kScaleKey] floatValue] ?: 20.0f;
+    INVERT_Y_AXIS = [settings[kInvertYKey] boolValue];
+}
+
 // Store the left button's game handler for triggering from right-click handler
 static GCControllerButtonValueChangedHandler leftButtonGameHandler = nil;
 static GCControllerButtonInput* leftButtonInput = nil;
@@ -194,6 +209,9 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     TRIGGER_KEY = GCKeyCodeLeftAlt;
     POPUP_KEY = GCKeyCodeKeyP;
     
+    // Restore persisted sensitivity settings before pre-computing values.
+    restoreSettings();
+
     // OPTIMIZATION: Pre-calculate sensitivities once at startup
     recalculateSensitivities();
     
@@ -437,9 +455,11 @@ static void updateMouseLock(BOOL value) {
             }
         }
 
+        float yDirection = INVERT_Y_AXIS ? -1.0f : 1.0f;
+
         // PC FORTNITE EXACT SENSITIVITY FORMULA - OPTIMIZED
         mouseAccumX += deltaX * (isADS ? adsSensitivityX : hipSensitivityX);
-        mouseAccumY += deltaY * (isADS ? adsSensitivityY : hipSensitivityY);
+        mouseAccumY += deltaY * yDirection * (isADS ? adsSensitivityY : hipSensitivityY);
 
         int outX = (int)mouseAccumX;
         int outY = (int)mouseAccumY;

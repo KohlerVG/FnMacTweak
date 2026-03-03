@@ -156,7 +156,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     // Version-based initialization for clean updates.
     // The version is hardcoded here — no postinst needed. %ctor writes
     // fnmactweak.lastSeenVersion itself, so version bumps are always detected.
-    NSString* currentVersion = @"2.0.2";
+    NSString* currentVersion = @"2.0.3";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {
@@ -225,7 +225,7 @@ static void createPopup() {
 
     CGFloat popupW = PixelAlign(330.0);
     CGFloat popupH = PixelAlign(600.0);
-    CGRect screen = scene ? scene.effectiveGeometry.coordinateSpace.bounds : CGRectMake(0, 0, 390, 844);
+    CGRect screen = scene ? scene.screen.bounds : CGRectMake(0, 0, 390, 844);
     CGFloat centeredY = PixelAlign((screen.size.height - popupH) / 2.0);
 
     popupWindow.frame = CGRectMake(
@@ -458,9 +458,32 @@ static void updateMouseLock(BOOL value) {
 %end
 
 // Handle scroll wheel for remapping
-%hook GCMouseInput
+%hook GCControllerDirectionPad
 
-- (void)setScrollValueChangedHandler:(void (^)(GCControllerDirectionPad* _Nonnull, float, float))handler {
+- (void)setValueChangedHandler:(void (^)(GCControllerDirectionPad* _Nonnull, float, float))handler {
+    // Only intercept the mouse scroll pad, not all direction pads.
+    // Use respondsToSelector: to guard the .scroll property, which is Tahoe-only (macOS 16+).
+    // On Sequoia (macOS 15), we fall back to checking if this pad belongs to any mouse's input
+    // by comparing against the known scroll pad via the older API path.
+    GCMouse *currentMouse = GCMouse.current;
+    BOOL isScrollPad = NO;
+    if (currentMouse && currentMouse.mouseInput) {
+        GCMouseInput *mouseInput = currentMouse.mouseInput;
+        if ([mouseInput respondsToSelector:@selector(scroll)]) {
+            // Tahoe+: use the dedicated scroll property
+            isScrollPad = ([mouseInput scroll] == self);
+        } else {
+            // Sequoia fallback: scroll pads are direction pads not equal to any thumbstick/dpad
+            // We identify the scroll pad by checking it isn't a button-backed pad (it has no buttons)
+            isScrollPad = (self.xAxis != nil && self.yAxis != nil &&
+                           self.up == nil && self.down == nil &&
+                           self.left == nil && self.right == nil);
+        }
+    }
+    if (!isScrollPad) {
+        %orig;
+        return;
+    }
     if (!handler) {
         %orig;
         return;

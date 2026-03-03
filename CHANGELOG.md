@@ -3,6 +3,13 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.3] — March 2026
+
+### 🐛 Fixed
+- **Crash on macOS Sequoia** — `setScrollValueChangedHandler:` on `GCMouseInput` is a Tahoe-only API and does not exist on Sequoia (macOS 15), causing an instant crash on launch. Scroll wheel handling is now hooked via `setValueChangedHandler:` on `GCControllerDirectionPad` with a `respondsToSelector:` runtime guard to safely identify the scroll pad on both Sequoia and Tahoe.
+
+---
+
 ## [2.0.2] — February 2026
 
 ### ✨ Added

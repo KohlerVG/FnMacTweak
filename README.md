@@ -150,7 +150,8 @@ See [CHANGELOG.md](CHANGELOG.md) for a full version history and technical breakd
 
 ## 🏆 Credits
 
-- **[@kohlervg](https://github.com/KohlerVG)** — Original author, sensitivity system overhaul, Zero-Lag optimizations, Robust Mouse Lock & resizable video popup
+- **[@kohlervg](https://github.com/KohlerVG)** — Project Overhaul: Re-engineered the sensitivity system, keymapping, build mode, import/export functionality, Zero-lag optimizations, and custom PiP.
+- **[@rt2746](https://github.com/rt2746)** — Original Author: Creator of the initial [FnMacTweak](https://github.com/rt-someone/FnMacTweak) repository.
 - **[Facebook fishhook](https://github.com/facebook/fishhook)** — Used for `sysctl` hooking in a jailed environment
 - **[PlayCover / PlayTools](https://github.com/PlayCover/PlayTools)** — Inspiration for device model spoofing
 

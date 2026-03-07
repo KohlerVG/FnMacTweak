@@ -3,6 +3,26 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.4] — March 2026
+
+### 🐛 Fixed
+- **Mouse movement stuttering / burst lag** — Sub-pixel accumulation was using `int` truncation (`(int)mouseAccumX`) which always rounds toward zero, causing small movements to build up and release in sudden bursts. Replaced with `roundf` + carry remainder, which distributes movement evenly and eliminates the burst pattern. Mouse feel is now significantly smoother especially at lower sensitivities.
+- **BUILD mode stuck fire (ADS race condition)** — When holding left-click (UITouch) and pressing right-click to ADS, `leftClickSentToGame` was being set inside a `dispatch_async` block. If the player released left-click before that block executed, the release handler saw `leftClickSentToGame=NO` and skipped sending the GC button-up, leaving the fire input permanently stuck in the game. Flag is now set synchronously before the async dispatch.
+- **BUILD mode stuck fire (ADS release)** — When releasing right-click (ADS) while still holding left-click, the left button remained registered as a GC press in the game with no release path, since the left button handler only sends a GC release on physical left-click release. Right-click release now explicitly sends the GC release and resets state so left-click re-enters the UITouch path cleanly.
+- **Sensitivity not applied at launch** — `recalculateSensitivities()` was called in `%ctor` before any settings were loaded from `NSUserDefaults`, so it always computed from hardcoded defaults. Saved sensitivity values only took effect after opening the P menu. Settings are now loaded from `NSUserDefaults` before `recalculateSensitivities()` in `%ctor`.
+
+### ⚡ Performance
+- **Eliminated 120Hz heap allocation** — `lastMousePosition` was being updated on every mouse move event using a `connectedScenes` lookup (which allocates an `NSSet` internally). The variable was never read anywhere in the codebase. Entire block removed.
+- **Cached `keyWindow` reference** — `connectedScenes → keyWindow` lookups in the UITouch hooks and BUILD mode left button handler now use a static cached reference instead of re-resolving on every touch event. Cache is invalidated on lock state change.
+- **`GCMouse.handlerQueue` set only once** — The `%hook GCMouse - mouseInput` was setting `handlerQueue` on every access to `.mouseInput`. A static dirty flag now ensures it is set exactly once.
+
+### 🗑️ Removed
+- `keyboardChangedHandler` global — declared and exported but never assigned or read anywhere
+- `isAlreadyFocused` global — only ever written to (`= NO`), never read in any conditional
+- `saveFortniteKeybinds()` — declared, defined, and exported but never called; body was just `loadFortniteKeybinds()`
+
+---
+
 ## [2.0.3] — March 2026
 
 ### 🐛 Fixed

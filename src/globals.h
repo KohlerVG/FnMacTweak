@@ -57,9 +57,7 @@ extern GCKeyCode lastLookupKey;      // Cache for last remapping lookup
 extern GCKeyCode lastRemappedKey;    // Cache for last remapped result
 
 // Keyboard handler
-extern GCKeyboardValueChangedHandler keyboardChangedHandler;
 extern BOOL isMouseLocked;
-extern BOOL isAlreadyFocused;
 
 // BUILD mode setting
 extern BOOL isBuildModeEnabled;
@@ -88,7 +86,6 @@ void recalculateSensitivities(void);
 void loadKeyRemappings(void);
 void saveKeyRemappings(void);
 void loadFortniteKeybinds(void);  // Load Fortnite keybinds into fast array
-void saveFortniteKeybinds(void);   // Persists Fortnite keybinds to NSUserDefaults
 void updateRedDotVisibility(void);
 void createRedDotIndicator(void);
 void resetRedDotPosition(void);

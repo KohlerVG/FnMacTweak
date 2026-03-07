@@ -18,8 +18,7 @@ static double mouseAccumY = 0.0;
 static BOOL wasADS = NO;
 static BOOL wasADSInitialized = NO;
 
-// --------- BUILD MODE MOUSE POSITION TRACKING ---------
-static CGPoint lastMousePosition = CGPointZero;
+// --------- BUILD MODE STATE TRACKING ---------
 static BOOL leftButtonIsPressed = NO;
 static BOOL rightButtonIsPressed = NO;
 static BOOL leftClickSentToGame = NO;
@@ -39,6 +38,10 @@ static BOOL unlockingWhileFiring = NO;
 // Cache for UITouch view hierarchy checks (performance optimization)
 static UIView* lastCheckedView = nil;
 static BOOL lastViewWasUIElement = NO;
+
+// Cached keyWindow — looked up once, reused until lock state changes.
+// Invalidated in updateMouseLock() so it re-resolves after mode switches.
+static UIWindow* cachedKeyWindow = nil;
 
 // --------- DEVICE SPOOFING ---------
 // Intercepts sysctl/sysctlbyname to report DEVICE_MODEL and OEM_ID,
@@ -156,7 +159,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     // Version-based initialization for clean updates.
     // The version is hardcoded here — no postinst needed. %ctor writes
     // fnmactweak.lastSeenVersion itself, so version bumps are always detected.
-    NSString* currentVersion = @"2.0.3";
+    NSString* currentVersion = @"2.0.4";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {
@@ -194,6 +197,20 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     TRIGGER_KEY = GCKeyCodeLeftAlt;
     POPUP_KEY = GCKeyCodeKeyP;
     
+    // Load saved sensitivity settings BEFORE recalculating.
+    // Without this, recalculateSensitivities() uses hardcoded defaults
+    // and the user's saved values only apply after opening the P menu.
+    NSDictionary *savedSettings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSettingsKey];
+    if (savedSettings) {
+        float v;
+        v = [savedSettings[kBaseXYKey] floatValue]; if (v > 0) BASE_XY_SENSITIVITY = v;
+        v = [savedSettings[kLookXKey]  floatValue]; if (v > 0) LOOK_SENSITIVITY_X  = v;
+        v = [savedSettings[kLookYKey]  floatValue]; if (v > 0) LOOK_SENSITIVITY_Y  = v;
+        v = [savedSettings[kScopeXKey] floatValue]; if (v > 0) SCOPE_SENSITIVITY_X = v;
+        v = [savedSettings[kScopeYKey] floatValue]; if (v > 0) SCOPE_SENSITIVITY_Y = v;
+        v = [savedSettings[kScaleKey]  floatValue]; if (v > 0) MACOS_TO_PC_SCALE   = v;
+    }
+
     // OPTIMIZATION: Pre-calculate sensitivities once at startup
     recalculateSensitivities();
     
@@ -213,8 +230,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 // Helper to align coordinates to pixel boundaries
 static inline CGFloat PixelAlign(CGFloat value) {
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-    UIScreen *screen = scene.screen;
-    CGFloat scale = screen.scale;
+    CGFloat scale = scene.screen.scale ?: 2.0;
     return round(value * scale) / scale;
 }
 
@@ -354,7 +370,6 @@ static void updateMouseLock(BOOL value) {
     [mainViewController setNeedsUpdateOfPrefersPointerLocked];
 
     if (!value) {
-        isAlreadyFocused = NO;
         mouseAccumX = 0.0;
         mouseAccumY = 0.0;
         wasADSInitialized = NO;
@@ -370,6 +385,11 @@ static void updateMouseLock(BOOL value) {
         leftClickSentToGame  = NO;
         lockClickConsumed    = NO;
         unlockingWhileFiring = NO;
+
+        // Invalidate caches so they re-resolve after mode/window changes
+        cachedKeyWindow   = nil;
+        lastCheckedView   = nil;
+        lastViewWasUIElement = NO;
 
         // Dispatch cleanup on next run loop tick — after isMouseLocked is fully
         // committed and prefersPointerLocked has been re-queried — so any
@@ -406,6 +426,12 @@ static void updateMouseLock(BOOL value) {
         %orig;
         return;
     }
+
+    // Ensure GCMouse delivers all input callbacks on the main queue.
+    GCMouse *currentMouse = GCMouse.current;
+    if (currentMouse && currentMouse.handlerQueue != dispatch_get_main_queue()) {
+        currentMouse.handlerQueue = dispatch_get_main_queue();
+    }
     
     GCMouseMoved customHandler = ^(GCMouseInput * _Nonnull eventMouse, float deltaX, float deltaY) {
         if (!isMouseLocked) return;
@@ -423,36 +449,42 @@ static void updateMouseLock(BOOL value) {
             wasADS = isADS;
         }
 
-        // BUILD MODE: Update last mouse position for UI hit detection
-        if (isBuildModeEnabled) {
-            UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-            UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
-            if (keyWindow) {
-                lastMousePosition.x += deltaX;
-                lastMousePosition.y += deltaY;
-                
-                // Clamp to window bounds
-                lastMousePosition.x = MAX(0, MIN(lastMousePosition.x, keyWindow.bounds.size.width));
-                lastMousePosition.y = MAX(0, MIN(lastMousePosition.y, keyWindow.bounds.size.height));
-            }
-        }
-
         // PC FORTNITE EXACT SENSITIVITY FORMULA - OPTIMIZED
         mouseAccumX += deltaX * (isADS ? adsSensitivityX : hipSensitivityX);
         mouseAccumY += deltaY * (isADS ? adsSensitivityY : hipSensitivityY);
 
-        int outX = (int)mouseAccumX;
-        int outY = (int)mouseAccumY;
+        // roundf instead of int cast — keeps the fractional remainder for
+        // next event (preserving precision) but distributes it evenly rather
+        // than always truncating toward zero (which caused burst lag).
+        float outX = roundf((float)mouseAccumX);
+        float outY = roundf((float)mouseAccumY);
 
-        mouseAccumX -= (double)outX;
-        mouseAccumY -= (double)outY;
+        mouseAccumX -= outX;
+        mouseAccumY -= outY;
 
-        if ((outX | outY) != 0) {
-            handler(eventMouse, (float)outX, (float)outY);
+        if (outX != 0.0f || outY != 0.0f) {
+            handler(eventMouse, outX, outY);
         }
     };
 
     %orig(customHandler);
+}
+
+%end
+
+// Also set handlerQueue on the GCMouse object itself whenever a new
+// mouse connects — covers the case where setMouseMovedHandler is called
+// before we've had a chance to set the queue.
+%hook GCMouse
+
+- (GCMouseInput *)mouseInput {
+    // Set handlerQueue only once — flag prevents repeated work on every .mouseInput access
+    static BOOL handlerQueueSet = NO;
+    if (!handlerQueueSet && self.handlerQueue != dispatch_get_main_queue()) {
+        self.handlerQueue = dispatch_get_main_queue();
+        handlerQueueSet = YES;
+    }
+    return %orig;
 }
 
 %end
@@ -544,47 +576,51 @@ static void updateMouseLock(BOOL value) {
                         currentMouse.mouseInput.auxiliaryButtons[1] == self);
 
     if (isRightButton) {
-        // Track right-click state for both Zero Build and Build Mode
         GCControllerButtonValueChangedHandler customHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            // CRITICAL: Handle UITouch to GC transition (Build Mode only)
-            if (isBuildModeEnabled && pressed && !rightButtonIsPressed && leftButtonIsPressed && !leftClickSentToGame) {
-                // Transitioning from UITouch mode to GC mode while left is held
-                // We need to make the game think left button was just pressed
-                
-                // Cancel the UITouch first
-                UIApplication *app = [UIApplication sharedApplication];
-                if ([app respondsToSelector:@selector(_cancelAllTouches)]) {
-                    [app performSelector:@selector(_cancelAllTouches)];
-                }
-                
-                // Now trigger the left button handler
-                // Get the left mouse button
-                GCMouse *currentMouse = [GCMouse current];
-                if (currentMouse && currentMouse.mouseInput && currentMouse.mouseInput.leftButton) {
-                    // Use the stored game handler to send GC press
-                    // dispatch_async provides a small delay (~1-2ms) that allows the game to accept the event
-                    // This is the ONLY way to seamlessly transition from UITouch to GC mode
-                    // IMPORTANT: leftClickSentToGame is set INSIDE the block so the release handler
-                    // cannot race ahead and send a GC release before the GC press has fired,
-                    // which would leave the game with a stuck button.
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if (leftButtonGameHandler && leftButtonInput) {
-                            // Send press event through the game's handler
-                            leftButtonGameHandler(leftButtonInput, 1.0, YES);
-                            leftClickSentToGame = YES;
+
+            if (isBuildModeEnabled) {
+                if (pressed && !rightButtonIsPressed) {
+                    // ---- RIGHT CLICK DOWN ----
+                    // If left is held as UITouch (leftClickSentToGame=NO), transition it
+                    // to GC mode synchronously so press and release can't get out of order.
+                    if (leftButtonIsPressed && !leftClickSentToGame) {
+                        // 1. Cancel the UITouch first
+                        UIApplication *app = [UIApplication sharedApplication];
+                        if ([app respondsToSelector:@selector(_cancelAllTouches)]) {
+                            [app performSelector:@selector(_cancelAllTouches)];
                         }
-                    });
+                        // 2. Mark as sent BEFORE sending so release handler is always consistent
+                        leftClickSentToGame = YES;
+                        // 3. Send the GC press synchronously — no dispatch_async race
+                        if (leftButtonGameHandler && leftButtonInput) {
+                            leftButtonGameHandler(leftButtonInput, 1.0, YES);
+                        }
+                    }
+                } else if (!pressed && rightButtonIsPressed) {
+                    // ---- RIGHT CLICK RELEASE (ADS released) ----
+                    // If left is still held and was sent as GC, send GC release now
+                    // because left click is transitioning back to UITouch mode.
+                    // Without this, the game keeps ADS-firing with no way to release.
+                    if (leftButtonIsPressed && leftClickSentToGame) {
+                        if (leftButtonGameHandler && leftButtonInput) {
+                            leftButtonGameHandler(leftButtonInput, 0.0, NO);
+                        }
+                        leftClickSentToGame = NO;
+                        // Left button is still physically held — it will re-register
+                        // as a UITouch on the next frame naturally. Reset pressed state
+                        // so the left button handler re-enters correctly.
+                        leftButtonIsPressed = NO;
+                    }
                 }
             }
-            
+
             rightButtonIsPressed = pressed;
-            
-            // Pass right-click through normally
+
             if (isMouseLocked) {
                 handler(button, value, pressed);
             }
         };
-        
+
         %orig(customHandler);
     } else if (isLeftButton) {
         GCControllerButtonValueChangedHandler customHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
@@ -620,8 +656,11 @@ static void updateMouseLock(BOOL value) {
                     handler(button, value, pressed);
                 } else {
                     // ===== BUILD MODE (new right-click toggle behavior) =====
-                    UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-                    UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
+                    if (!cachedKeyWindow) {
+                        UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+                        cachedKeyWindow = scene.keyWindow ?: scene.windows.firstObject;
+                    }
+                    UIWindow *keyWindow = cachedKeyWindow;
                     
                     if (keyWindow) {
                         // Only check UI position on button press, not release
@@ -975,11 +1014,13 @@ static void updateMouseLock(BOOL value) {
             return redDotTargetPosition;
         }
         
-        // Get window and convert red dot position to view's coordinates
-        UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-        UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
-        if (keyWindow) {
-            return [view convertPoint:redDotTargetPosition fromView:keyWindow];
+        // Use cached keyWindow — avoids connectedScenes alloc per touch event
+        if (!cachedKeyWindow) {
+            UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+            cachedKeyWindow = scene.keyWindow ?: scene.windows.firstObject;
+        }
+        if (cachedKeyWindow) {
+            return [view convertPoint:redDotTargetPosition fromView:cachedKeyWindow];
         }
         return redDotTargetPosition;
     }
@@ -1021,11 +1062,13 @@ static void updateMouseLock(BOOL value) {
             return redDotTargetPosition;
         }
         
-        // Get window and convert red dot position to view's coordinates
-        UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-        UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
-        if (keyWindow) {
-            return [view convertPoint:redDotTargetPosition fromView:keyWindow];
+        // Use cached keyWindow — avoids connectedScenes alloc per touch event
+        if (!cachedKeyWindow) {
+            UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+            cachedKeyWindow = scene.keyWindow ?: scene.windows.firstObject;
+        }
+        if (cachedKeyWindow) {
+            return [view convertPoint:redDotTargetPosition fromView:cachedKeyWindow];
         }
         return redDotTargetPosition;
     }

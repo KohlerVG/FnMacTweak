@@ -213,17 +213,7 @@ void loadFortniteKeybinds() {
     }
 }
 
-// Fortnite keybind persistence is handled directly by the UI on save
-void saveFortniteKeybinds() {
-    // Not needed - popupViewController saves directly to UserDefaults
-    // Just reload the array when called
-    loadFortniteKeybinds();
-}
-
-// Keyboard handler
-GCKeyboardValueChangedHandler keyboardChangedHandler = nil;
 BOOL isMouseLocked = false;
-BOOL isAlreadyFocused = false;
 
 // BUILD mode setting (default: NO = ZERO BUILD mode)
 BOOL isBuildModeEnabled = false;

@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [3.0.0] — March 2026
 
 ### ✨ Added
+- **Borderless fullscreen mode** — Play without the macOS title bar. The window fills the screen edge-to-edge using `visibleFrame` for correct centering below the menu bar, with the title bar and traffic lights hidden automatically.
+- **Mouse button support** — Middle click and all auxiliary mouse buttons are now fully remappable just like keyboard keys, via the Key Remap tab.
+- **Discrete scroll wheel remapping** — Scroll up and scroll down can be mapped to any key or Fortnite action (e.g. weapon switch, USE, build select). Works as a true per-tick keypress with no bleed-through.
 - **Unified Lock / Unlock Cursor card** — The welcome screen and Quick Start guide now show a single combined card instead of two separate Lock / Unlock cards. Keybind displayed as `L⌥ + Click` with updated description: *"Hold Left Option and click to lock or unlock your mouse cursor to the game window."*
 
 ### 🔄 Changed

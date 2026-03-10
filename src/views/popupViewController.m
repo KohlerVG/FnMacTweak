@@ -874,36 +874,43 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   // 1. Lazy Load Window (Persistent)
   if (!self.videoWindow) {
     UIWindowScene *scene = (UIWindowScene *)sourceWindow.windowScene;
-    if (!scene) return;
+    if (!scene)
+      return;
 
     self.videoWindow = [[FnOverlayWindow alloc] initWithWindowScene:scene];
     self.videoWindow.windowLevel = UIWindowLevelAlert + 10;
     self.videoWindow.backgroundColor = [UIColor clearColor];
 
-    FnVideoRootViewController *rootVC = [[FnVideoRootViewController alloc] init];
+    FnVideoRootViewController *rootVC =
+        [[FnVideoRootViewController alloc] init];
     self.videoWindow.rootViewController = rootVC;
 
     [self setupPersistentUI];
   }
 
   // 2. Re-center the window (user may have dragged it last time).
-  UIView *wrapper = objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
+  UIView *wrapper =
+      objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
   UIView *animTarget = wrapper ?: self.playerContainer;
   [animTarget.layer removeAllAnimations];
 
   CGFloat W = 1000, H = W * 9.0 / 16.0;
   UIWindowScene *ws = (UIWindowScene *)self.videoWindow.windowScene;
-  CGRect sb = ws ? ws.effectiveGeometry.coordinateSpace.bounds : self.videoWindow.bounds;
+  CGRect sb = ws ? ws.effectiveGeometry.coordinateSpace.bounds
+                 : self.videoWindow.bounds;
   animTarget.transform = CGAffineTransformIdentity;
   animTarget.frame = CGRectMake(floor((sb.size.width - W) / 2.0),
                                 floor((sb.size.height - H) / 2.0), W, H);
   if (wrapper)
     wrapper.layer.shadowPath =
-        [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, W, H) cornerRadius:12].CGPath;
+        [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, W, H)
+                                   cornerRadius:12]
+            .CGPath;
   self.playerContainer.frame = CGRectMake(0, 0, W, H);
   [self layoutResizeHandles:wrapper ?: self.playerContainer];
 
-  // 3. Setup Player Item — detach/re-attach so controls bar observes the new item.
+  // 3. Setup Player Item — detach/re-attach so controls bar observes the new
+  // item.
   //    *** Video loading is exactly as in v2.0.1 — untouched. ***
   [self.customPlayerView.controlsBar detachFromPlayer];
   AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
@@ -922,7 +929,10 @@ static void FnAnimatePress(UIView *v, BOOL down) {
       usingSpringWithDamping:0.72
       initialSpringVelocity:0.3
       options:UIViewAnimationOptionAllowUserInteraction
-      animations:^{ animTarget.transform = CGAffineTransformIdentity; animTarget.alpha = 1.0; }
+      animations:^{
+        animTarget.transform = CGAffineTransformIdentity;
+        animTarget.alpha = 1.0;
+      }
       completion:^(BOOL finished) {
         [self.player play];
       }];
@@ -944,25 +954,27 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   CGFloat w = 1000;
   CGFloat h = w * 9.0 / 16.0;
   UIWindowScene *scene = (UIWindowScene *)self.videoWindow.windowScene;
-  CGRect screenBounds = scene
-      ? scene.effectiveGeometry.coordinateSpace.bounds
-      : self.videoWindow.bounds;
+  CGRect screenBounds = scene ? scene.effectiveGeometry.coordinateSpace.bounds
+                              : self.videoWindow.bounds;
 
   // Outer shadow wrapper — masksToBounds=NO so shadow renders outside bounds
-  CGFloat ox = floor((screenBounds.size.width  - w) / 2.0);
+  CGFloat ox = floor((screenBounds.size.width - w) / 2.0);
   CGFloat oy = floor((screenBounds.size.height - h) / 2.0);
-  UIView *shadowWrapper = [[UIView alloc] initWithFrame:CGRectMake(ox, oy, w, h)];
+  UIView *shadowWrapper =
+      [[UIView alloc] initWithFrame:CGRectMake(ox, oy, w, h)];
   shadowWrapper.backgroundColor = [UIColor clearColor];
-  shadowWrapper.layer.shadowColor   = [UIColor blackColor].CGColor;
+  shadowWrapper.layer.shadowColor = [UIColor blackColor].CGColor;
   shadowWrapper.layer.shadowOpacity = 0.55;
-  shadowWrapper.layer.shadowRadius  = 20;
-  shadowWrapper.layer.shadowOffset  = CGSizeMake(0, 6);
-  shadowWrapper.layer.shadowPath    =
+  shadowWrapper.layer.shadowRadius = 20;
+  shadowWrapper.layer.shadowOffset = CGSizeMake(0, 6);
+  shadowWrapper.layer.shadowPath =
       [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, w, h)
-                                 cornerRadius:12].CGPath;
+                                 cornerRadius:12]
+          .CGPath;
   [self.videoWindow.rootViewController.view addSubview:shadowWrapper];
 
-  // Inner container — masksToBounds=YES clips video and controls to rounded rect
+  // Inner container — masksToBounds=YES clips video and controls to rounded
+  // rect
   self.playerContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
   self.playerContainer.backgroundColor = [UIColor blackColor];
   self.playerContainer.layer.cornerRadius = 12;
@@ -973,12 +985,13 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   [shadowWrapper addSubview:self.playerContainer];
 
   // Store shadow wrapper so drag/resize can move it together
-  objc_setAssociatedObject(self.playerContainer, "shadowWrapper",
-                           shadowWrapper, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  objc_setAssociatedObject(self.playerContainer, "shadowWrapper", shadowWrapper,
+                           OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
   // Drag to move
-  UIPanGestureRecognizer *drag = [[UIPanGestureRecognizer alloc]
-      initWithTarget:self action:@selector(handleDrag:)];
+  UIPanGestureRecognizer *drag =
+      [[UIPanGestureRecognizer alloc] initWithTarget:self
+                                              action:@selector(handleDrag:)];
   drag.minimumNumberOfTouches = 1;
   [self.playerContainer addGestureRecognizer:drag];
 
@@ -1054,36 +1067,39 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   [self.player pause];
   [self.player replaceCurrentItemWithPlayerItem:nil];
 
-  UIView *wrapper = objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
+  UIView *wrapper =
+      objc_getAssociatedObject(self.playerContainer, "shadowWrapper");
   UIView *animTarget = wrapper ?: self.playerContainer;
 
   if (animated) {
     [UIView animateWithDuration:0.25
-                          delay:0
-         usingSpringWithDamping:0.85
-          initialSpringVelocity:0.2
-                        options:UIViewAnimationOptionAllowUserInteraction
-                     animations:^{
-                       animTarget.transform = CGAffineTransformMakeScale(0.88, 0.88);
-                       animTarget.alpha = 0.0;
-                     }
-                     completion:^(BOOL finished) {
-                       self.videoWindow.hidden = YES;
-                       animTarget.transform = CGAffineTransformIdentity;
-                       animTarget.alpha = 1.0;
-                     }];
+        delay:0
+        usingSpringWithDamping:0.85
+        initialSpringVelocity:0.2
+        options:UIViewAnimationOptionAllowUserInteraction
+        animations:^{
+          animTarget.transform = CGAffineTransformMakeScale(0.88, 0.88);
+          animTarget.alpha = 0.0;
+        }
+        completion:^(BOOL finished) {
+          self.videoWindow.hidden = YES;
+          animTarget.transform = CGAffineTransformIdentity;
+          animTarget.alpha = 1.0;
+        }];
   } else {
     self.videoWindow.hidden = YES;
   }
 }
 
-// ── Drag to move ──────────────────────────────────────────────────────────────
+// ── Drag to move
+// ──────────────────────────────────────────────────────────────
 - (void)handleDrag:(UIPanGestureRecognizer *)gr {
   UIView *container = self.playerContainer;
   UIView *wrapper = objc_getAssociatedObject(container, "shadowWrapper");
   UIView *parent = wrapper ? wrapper.superview : container.superview;
   UIView *moving = wrapper ?: container;
-  if (!parent) return;
+  if (!parent)
+    return;
 
   CGPoint delta = [gr translationInView:parent];
   CGRect f = moving.frame;
@@ -1091,24 +1107,25 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   f.origin.y += delta.y;
 
   CGRect sb = parent.bounds;
-  f.origin.x = MAX(0, MIN(sb.size.width  - f.size.width,  f.origin.x));
+  f.origin.x = MAX(0, MIN(sb.size.width - f.size.width, f.origin.x));
   f.origin.y = MAX(0, MIN(sb.size.height - f.size.height, f.origin.y));
 
   moving.frame = f;
   [gr setTranslation:CGPointZero inView:parent];
 }
 
-// ── Resize handle setup ───────────────────────────────────────────────────────
+// ── Resize handle setup
+// ───────────────────────────────────────────────────────
 - (void)addResizeHandlesToContainer:(UIView *)container {
   NSArray *configs = @[
-    @[@1,  @"resizeUpDownCursor"],
-    @[@2,  @"resizeUpDownCursor"],
-    @[@4,  @"resizeLeftRightCursor"],
-    @[@8,  @"resizeLeftRightCursor"],
-    @[@5,  @"_windowResizeNorthWestSouthEastCursor"],
-    @[@9,  @"_windowResizeNorthEastSouthWestCursor"],
-    @[@6,  @"_windowResizeNorthEastSouthWestCursor"],
-    @[@10, @"_windowResizeNorthWestSouthEastCursor"],
+    @[ @1, @"resizeUpDownCursor" ],
+    @[ @2, @"resizeUpDownCursor" ],
+    @[ @4, @"resizeLeftRightCursor" ],
+    @[ @8, @"resizeLeftRightCursor" ],
+    @[ @5, @"_windowResizeNorthWestSouthEastCursor" ],
+    @[ @9, @"_windowResizeNorthEastSouthWestCursor" ],
+    @[ @6, @"_windowResizeNorthEastSouthWestCursor" ],
+    @[ @10, @"_windowResizeNorthWestSouthEastCursor" ],
   ];
   for (NSArray *cfg in configs) {
     UIView *handle = [[UIView alloc] initWithFrame:CGRectZero];
@@ -1117,11 +1134,13 @@ static void FnAnimatePress(UIView *v, BOOL down) {
     objc_setAssociatedObject(handle, "nsCursorSel", cfg[1],
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     UIPanGestureRecognizer *rp = [[UIPanGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handleResize:)];
+        initWithTarget:self
+                action:@selector(handleResize:)];
     [handle addGestureRecognizer:rp];
     if (@available(iOS 13.4, *)) {
       UIHoverGestureRecognizer *hover = [[UIHoverGestureRecognizer alloc]
-          initWithTarget:self action:@selector(handleResizeHandleHover:)];
+          initWithTarget:self
+                  action:@selector(handleResizeHandleHover:)];
       [handle addGestureRecognizer:hover];
     }
     [container addSubview:handle];
@@ -1131,23 +1150,29 @@ static void FnAnimatePress(UIView *v, BOOL down) {
 
 - (void)pushNSCursor:(NSString *)selName {
   Class cls = NSClassFromString(@"NSCursor");
-  if (!cls) return;
+  if (!cls)
+    return;
   SEL getSel = NSSelectorFromString(selName);
   IMP getImp = [cls methodForSelector:getSel];
-  if (!getImp) return;
-  id cursor = ((id (*)(id, SEL))getImp)(cls, getSel);
-  if (!cursor) return;
+  if (!getImp)
+    return;
+  id cursor = ((id(*)(id, SEL))getImp)(cls, getSel);
+  if (!cursor)
+    return;
   SEL pushSel = NSSelectorFromString(@"push");
   IMP pushImp = [cursor methodForSelector:pushSel];
-  if (pushImp) ((void (*)(id, SEL))pushImp)(cursor, pushSel);
+  if (pushImp)
+    ((void (*)(id, SEL))pushImp)(cursor, pushSel);
 }
 
 - (void)popNSCursor {
   Class cls = NSClassFromString(@"NSCursor");
-  if (!cls) return;
+  if (!cls)
+    return;
   SEL popSel = NSSelectorFromString(@"pop");
   IMP popImp = [cls methodForSelector:popSel];
-  if (popImp) ((void (*)(id, SEL))popImp)(cls, popSel);
+  if (popImp)
+    ((void (*)(id, SEL))popImp)(cls, popSel);
 }
 
 - (void)handleResizeHandleHover:(UIHoverGestureRecognizer *)hover
@@ -1167,14 +1192,15 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   CGFloat w = container.bounds.size.width;
   CGFloat h = container.bounds.size.height;
   for (UIView *handle in container.subviews) {
-    if (handle.tag == 0) continue;
+    if (handle.tag == 0)
+      continue;
     NSInteger t = handle.tag;
-    BOOL top    = (t & 1) != 0;
+    BOOL top = (t & 1) != 0;
     BOOL bottom = (t & 2) != 0;
-    BOOL left   = (t & 4) != 0;
-    BOOL right  = (t & 8) != 0;
-    CGFloat x  = left ? 0 : (right ? w - e : e);
-    CGFloat y  = top  ? 0 : (bottom ? h - e : e);
+    BOOL left = (t & 4) != 0;
+    BOOL right = (t & 8) != 0;
+    CGFloat x = left ? 0 : (right ? w - e : e);
+    CGFloat y = top ? 0 : (bottom ? h - e : e);
     CGFloat fw = (left || right) ? e : w - e * 2;
     CGFloat fh = (top || bottom) ? e : h - e * 2;
     handle.frame = CGRectMake(x, y, fw, fh);
@@ -1182,10 +1208,11 @@ static void FnAnimatePress(UIView *v, BOOL down) {
 }
 
 - (void)handleResize:(UIPanGestureRecognizer *)gr {
-  UIView *handle  = (UIView *)gr.view;
+  UIView *handle = (UIView *)gr.view;
   UIView *wrapper = handle.superview;
-  UIView *parent  = wrapper.superview;
-  if (!parent) return;
+  UIView *parent = wrapper.superview;
+  if (!parent)
+    return;
 
   static CGRect startFrame;
   if (gr.state == UIGestureRecognizerStateBegan) {
@@ -1196,36 +1223,56 @@ static void FnAnimatePress(UIView *v, BOOL down) {
   CGPoint delta = [gr translationInView:parent];
   CGRect f = startFrame;
   NSInteger t = handle.tag;
-  BOOL top    = (t & 1) != 0;
+  BOOL top = (t & 1) != 0;
   BOOL bottom = (t & 2) != 0;
-  BOOL left   = (t & 4) != 0;
-  BOOL right  = (t & 8) != 0;
+  BOOL left = (t & 4) != 0;
+  BOOL right = (t & 8) != 0;
 
   static const CGFloat kAspect = 16.0 / 9.0;
   if (left || right) {
-    if (left)  { f.origin.x += delta.x; f.size.width  -= delta.x; }
-    if (right) { f.size.width  += delta.x; }
+    if (left) {
+      f.origin.x += delta.x;
+      f.size.width -= delta.x;
+    }
+    if (right) {
+      f.size.width += delta.x;
+    }
     f.size.height = f.size.width / kAspect;
-    if (top) f.origin.y = startFrame.origin.y + startFrame.size.height - f.size.height;
+    if (top)
+      f.origin.y = startFrame.origin.y + startFrame.size.height - f.size.height;
   } else {
-    if (top)    { f.origin.y += delta.y; f.size.height -= delta.y; }
-    if (bottom) { f.size.height += delta.y; }
+    if (top) {
+      f.origin.y += delta.y;
+      f.size.height -= delta.y;
+    }
+    if (bottom) {
+      f.size.height += delta.y;
+    }
     f.size.width = f.size.height * kAspect;
-    if (left) f.origin.x = startFrame.origin.x + startFrame.size.width - f.size.width;
+    if (left)
+      f.origin.x = startFrame.origin.x + startFrame.size.width - f.size.width;
   }
 
   CGFloat minW = 400, minH = 225;
-  if (f.size.width  < minW) { f.size.width  = minW; f.size.height = minW / kAspect; }
-  if (f.size.height < minH) { f.size.height = minH; f.size.width  = minH * kAspect; }
+  if (f.size.width < minW) {
+    f.size.width = minW;
+    f.size.height = minW / kAspect;
+  }
+  if (f.size.height < minH) {
+    f.size.height = minH;
+    f.size.width = minH * kAspect;
+  }
 
   CGRect sb = parent.bounds;
-  f.origin.x = MAX(0, MIN(sb.size.width  - f.size.width,  f.origin.x));
+  f.origin.x = MAX(0, MIN(sb.size.width - f.size.width, f.origin.x));
   f.origin.y = MAX(0, MIN(sb.size.height - f.size.height, f.origin.y));
 
   wrapper.frame = f;
   wrapper.layer.shadowPath =
-      [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, f.size.width, f.size.height)
-                                 cornerRadius:12].CGPath;
+      [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, f.size.width,
+                                                         f.size.height)
+                                 cornerRadius:12]
+          .CGPath;
   self.playerContainer.frame = CGRectMake(0, 0, f.size.width, f.size.height);
   [self layoutResizeHandles:wrapper];
 
@@ -1285,7 +1332,8 @@ static NSString *const kFnVideoAssetURL =
                                 self.thumbnailView.hidden = NO;
                               });
                             } else {
-                              // Thumbnail generation failed — keep black background
+                              // Thumbnail generation failed — keep black
+                              // background
                             }
                           }];
 }
@@ -1451,19 +1499,32 @@ static void loadSettings() {
   loadKeyRemappings();
 }
 
+// Helper: returns YES if this keyCode is one of our mouse-input codes (not a
+// real GCKeyCode). Mouse input codes are always >= MOUSE_BUTTON_MIDDLE and can
+// never be Fortnite keybind targets.
+static BOOL isMouseInputCode(GCKeyCode keyCode) {
+  return (keyCode >= MOUSE_BUTTON_MIDDLE);
+}
+
 // Helper to get readable key name
 static NSString *getKeyName(GCKeyCode keyCode) {
   // Check for mouse buttons first (our custom codes)
   if (keyCode == MOUSE_BUTTON_MIDDLE)
     return @"🖱️ Middle";
-  if (keyCode == MOUSE_BUTTON_SIDE1)
-    return @"🖱️ Side 1";
-  if (keyCode == MOUSE_BUTTON_SIDE2)
-    return @"🖱️ Side 2";
+  // Aux buttons: aux[0]=Button4, aux[1]=Button5, etc. (industry standard
+  // naming)
+  if (keyCode >= MOUSE_BUTTON_AUX_BASE && keyCode <= MOUSE_BUTTON_AUX_MAX)
+    return
+        [NSString stringWithFormat:@"🖱️ M%ld",
+                                   (long)(keyCode - MOUSE_BUTTON_AUX_BASE + 4)];
   if (keyCode == MOUSE_SCROLL_UP)
     return @"🖱️ Scroll ↑";
   if (keyCode == MOUSE_SCROLL_DOWN)
     return @"🖱️ Scroll ↓";
+  if (keyCode == MOUSE_SCROLL_LEFT)
+    return @"🖱️ Scroll ←";
+  if (keyCode == MOUSE_SCROLL_RIGHT)
+    return @"🖱️ Scroll →";
 
   // Letter keys A–Z (USB HID: A=4 … Z=29)
   if (keyCode >= 4 && keyCode <= 29) {
@@ -1584,6 +1645,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (void)saveButtonTapped:(UIButton *)sender;
 - (void)applyDefaultsTapped:(UIButton *)sender;
 - (void)switchToTab:(PopupTab)tab;
+- (void)stageMouseButtonKeybind:(int)mouseCode forAction:(NSString *)actionName;
+- (void)clearMouseBindingForAction:(NSString *)actionName;
 @end
 
 @implementation popupViewController
@@ -1721,6 +1784,24 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
   [titleBar addSubview:self.closeButton];
 
+  // Version pill — same right margin as close button's left margin (12pt)
+  CGFloat pillW = 44.0;
+  CGFloat pillH = 16.0; // matches close button size exactly
+  CGFloat pillX = 330.0 - 12.0 - pillW;
+  CGFloat pillY = (40.0 - pillH) / 2.0;
+  UIView *versionPill = [[UIView alloc] initWithFrame:CGRectMake(pillX, pillY, pillW, pillH)];
+  versionPill.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1.0];
+  versionPill.layer.cornerRadius = pillH / 2.0;
+  versionPill.layer.borderWidth = 0.5;
+  versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
+  UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
+  versionLabel.text = @"v3.0.0";
+  versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+  versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
+  versionLabel.textAlignment = NSTextAlignmentCenter;
+  [versionPill addSubview:versionLabel];
+  [titleBar addSubview:versionPill];
+
   // Add pan gesture for dragging window via title bar
   UIPanGestureRecognizer *panGesture =
       [[UIPanGestureRecognizer alloc] initWithTarget:self
@@ -1850,7 +1931,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   if (self.currentTab == 0 && self.sensitivityTab.superview == nil) {
     [self switchToTab:PopupTabSensitivity];
   }
-  // Ensure the red dot reflects the current Build Mode state whenever the popup appears
+  // Ensure the red dot reflects the current Build Mode state whenever the popup
+  // appears
   updateRedDotVisibility();
 }
 
@@ -2063,10 +2145,9 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   // ========================================
   // SCALE FACTOR SECTION (ADVANCED)
   // ========================================
-  y += 8; // Extra top spacing above divider to match other tabs (8 + 8 from
-          // section = 16pt total)
+  y += 8; // addSectionWithTitle already returns y+sectionHeight+8, so 8+8 = 16pt total gap above divider
   [self addDividerAtY:y toView:self.sensitivityTab];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   UILabel *advancedLabel = [[UILabel alloc]
       initWithFrame:CGRectMake(leftMargin, y, contentWidth, 20)];
@@ -2090,7 +2171,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                        isDouble:NO
                          toView:self.sensitivityTab];
 
-  y += 20; // Bottom margin (matching left/right margins)
+  y += 12; // addSectionWithTitle already returns y+sectionHeight+8, so 12+8 = 20pt total bottom margin
 
   // Feedback label (hidden, for legacy code compatibility)
   self.feedbackLabel = [[UILabel alloc]
@@ -2349,14 +2430,14 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   CGRect containerFrame = keybindsContainer.frame;
   containerFrame.size.height = rowY;
   keybindsContainer.frame = containerFrame;
-  y += rowY + 16;
+  y += rowY + 16; // 16pt gap above divider
 
   // Divider
   UIView *divider = [[UIView alloc]
       initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
   divider.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
   [self.keyRemapTab addSubview:divider];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   // Advanced Custom Remaps section header
   UILabel *advancedLabel = [[UILabel alloc]
@@ -2544,14 +2625,15 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                       action:@selector(selectZeroBuildMode)
             forControlEvents:UIControlEventTouchUpInside];
   [self.buildModeTab addSubview:zeroBuildButton];
-  y += 60;
+  y += 44; // button height
+  y += 16; // 16pt gap above divider
 
   // Divider
   UIView *divider = [[UIView alloc]
       initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
   divider.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
   [self.buildModeTab addSubview:divider];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   // Red dot reset section
   UILabel *redDotLabel = [[UILabel alloc]
@@ -2701,7 +2783,17 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   CGFloat contentWidth = 290;
 
   // Create a row for each existing remapping
+  NSDictionary *mouseFortniteBindings = [[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"];
+
   for (NSNumber *sourceKey in keyRemappings) {
+    // Skip mouse buttons that are actually Fortnite keybinds
+    if ([sourceKey integerValue] >= MOUSE_BUTTON_MIDDLE) {
+      if (mouseFortniteBindings[[sourceKey stringValue]] != nil) {
+        continue;
+      }
+    }
+
     NSNumber *targetKey = keyRemappings[sourceKey];
 
     UIView *row = [self createKeyRemapRowWithSourceKey:[sourceKey integerValue]
@@ -2872,14 +2964,14 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   // Key button with color-coded status
   UIButton *keyButton = [UIButton buttonWithType:UIButtonTypeSystem];
   keyButton.frame = CGRectMake(width - 110, 3, 110, 24);
-  keyButton.backgroundColor = [UIColor colorWithWhite:0.22 alpha:0.7];
+  keyButton.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
   keyButton.layer.cornerRadius = 4;
-  keyButton.layer.borderWidth = 0.5;
   keyButton.accessibilityLabel = action; // Store action name for later
   keyButton.tag = defaultKey;            // Store default key
   keyButton.enabled = !readOnly;
 
   // Set button title and color based on status
+  UIColor *borderColor;
   if (isUnbound) {
     // RED: Unbound
     [keyButton setTitle:@"[Unbound]" forState:UIControlStateNormal];
@@ -2888,8 +2980,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                               blue:0.3
                                              alpha:1.0]
                     forState:UIControlStateNormal];
-    keyButton.layer.borderColor =
-        [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:0.5].CGColor;
+    borderColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
   } else if (isStaged) {
     // YELLOW: Staged change
     [keyButton setTitle:getKeyName(currentKey) forState:UIControlStateNormal];
@@ -2898,29 +2989,23 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                               blue:0.2
                                              alpha:1.0]
                     forState:UIControlStateNormal];
-    keyButton.layer.borderColor =
-        [UIColor colorWithRed:0.8 green:0.7 blue:0.0 alpha:0.5].CGColor;
+    borderColor = [UIColor colorWithRed:0.8 green:0.7 blue:0.0 alpha:1.0];
   } else if (isCustomSaved) {
-    // BLACK: Custom saved
+    // BRIGHT WHITE text: Custom saved
     [keyButton setTitle:getKeyName(currentKey) forState:UIControlStateNormal];
-    [keyButton setTitleColor:[UIColor colorWithWhite:0.15 alpha:1.0]
+    [keyButton setTitleColor:[UIColor whiteColor]
                     forState:UIControlStateNormal];
-    keyButton.backgroundColor =
-        [UIColor colorWithWhite:0.9
-                          alpha:1.0]; // Lighter background for black text
-    keyButton.layer.borderColor =
-        [UIColor colorWithWhite:0.6 alpha:0.5].CGColor;
+    borderColor = [UIColor colorWithWhite:0.65 alpha:1.0];
   } else {
     // LIGHT GREY: Default
     [keyButton setTitle:getKeyName(currentKey) forState:UIControlStateNormal];
     [keyButton setTitleColor:[UIColor colorWithWhite:0.6 alpha:1.0]
                     forState:UIControlStateNormal];
-    keyButton.layer.borderColor =
-        [UIColor colorWithWhite:0.35 alpha:0.5].CGColor;
+    borderColor = [UIColor colorWithWhite:0.35 alpha:1.0];
   }
 
   if (readOnly) {
-    keyButton.alpha = 0.5; // Dim read-only buttons
+    keyButton.alpha = 0.5;
   } else {
     [keyButton addTarget:self
                   action:@selector(fortniteKeybindTapped:)
@@ -2930,6 +3015,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   keyButton.titleLabel.font = [UIFont systemFontOfSize:12
                                                 weight:UIFontWeightSemibold];
   [row addSubview:keyButton];
+  setShapeBorder(keyButton, 4, 0.5, borderColor);
 
   return row;
 }
@@ -2944,10 +3030,19 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     return [stagedKey integerValue];
   }
 
-  // Check if there's a saved custom binding
+  // Check if there's a saved custom keyboard binding
   NSNumber *savedKey = [self getSavedKeyForAction:action];
   if (savedKey) {
     return [savedKey integerValue];
+  }
+
+  // Check if a mouse button is bound to this action via mouseFortniteBindings
+  NSDictionary *mouseBindings = [[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"];
+  for (NSString *codeString in mouseBindings) {
+    if ([[mouseBindings objectForKey:codeString] integerValue] ==
+        (NSInteger)defaultKey)
+      return (GCKeyCode)[codeString intValue]; // return mouse code for display
   }
 
   // Return default
@@ -2958,9 +3053,17 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (BOOL)isActionCustomSaved:(NSString *)action
                  defaultKey:(GCKeyCode)defaultKey {
   NSNumber *savedKey = [self getSavedKeyForAction:action];
-  if (!savedKey)
-    return NO;
-  return [savedKey integerValue] != defaultKey;
+  if (savedKey && [savedKey integerValue] != defaultKey)
+    return YES;
+  // Also check mouse bindings
+  NSDictionary *mouseBindings = [[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"];
+  for (NSString *codeString in mouseBindings) {
+    if ([[mouseBindings objectForKey:codeString] integerValue] ==
+        (NSInteger)defaultKey)
+      return YES;
+  }
+  return NO;
 }
 
 // Get saved custom key for an action (returns nil if using default)
@@ -2976,9 +3079,9 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   NSString *actionName = sender.accessibilityLabel;
 
   UIAlertController *alert = [UIAlertController
-      alertControllerWithTitle:@"Change Key Binding"
-                       message:[NSString stringWithFormat:@"%@\nPress a key",
-                                                          actionName]
+      alertControllerWithTitle:actionName
+                       message:
+                           @"Press any key or click a mouse button to bind it"
                 preferredStyle:UIAlertControllerStyleAlert];
 
   [alert addAction:[UIAlertAction
@@ -2986,121 +3089,321 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  style:UIAlertActionStyleCancel
                                handler:^(UIAlertAction *_Nonnull action) {
                                  keyCaptureCallback = nil;
+                                 mouseButtonCaptureCallback = nil;
                                }]];
 
-  [self
-      presentViewController:alert
-                   animated:YES
-                 completion:^{
-                   __weak typeof(self) weakSelf = self;
+  [self presentViewController:alert
+                     animated:YES
+                   completion:^{
+                     __weak typeof(self) weakSelf = self;
 
-                   keyCaptureCallback = ^(GCKeyCode keyCode) {
-                     dispatch_async(dispatch_get_main_queue(), ^{
-                       __strong typeof(weakSelf) strongSelf = weakSelf;
-                       if (!strongSelf)
-                         return;
+                     mouseButtonCaptureCallback = ^(int buttonCode) {
+                       dispatch_async(dispatch_get_main_queue(),
+                                      ^{
+                                        __strong typeof(weakSelf) strongSelf =
+                                            weakSelf;
+                                        if (!strongSelf)
+                                          return;
+                                        mouseButtonCaptureCallback = nil;
+                                        keyCaptureCallback = nil;
+                                        [strongSelf.presentedViewController
+                                            dismissViewControllerAnimated:YES
+                                                               completion:
+                                                                   ^{
+                                                                     // Check if
+                                                                     // this
+                                                                     // mouse
+                                                                     // code is
+                                                                     // already
+                                                                     // bound to
+                                                                     // another
+                                                                     // action
+                                                                     NSNumber *existingTarget =
+                                                                         keyRemappings
+                                                                             [@(buttonCode)];
 
-                       keyCaptureCallback = nil;
-                       [strongSelf.presentedViewController
-                           dismissViewControllerAnimated:YES
-                                              completion:nil];
+                                                                     // Only
+                                                                     // warn if
+                                                                     // it's
+                                                                     // already
+                                                                     // mapped
+                                                                     // to
+                                                                     // something
+                                                                     // ELSE and
+                                                                     // that
+                                                                     // something
+                                                                     // isn't 0
+                                                                     if (existingTarget &&
+                                                                         [existingTarget
+                                                                             integerValue] !=
+                                                                             0 &&
+                                                                         [existingTarget
+                                                                             integerValue] !=
+                                                                             buttonCode) {
+                                                                       // Find
+                                                                       // which
+                                                                       // action
+                                                                       // currently
+                                                                       // owns
+                                                                       // this
+                                                                       // mouse
+                                                                       // code
+                                                                       NSString *
+                                                                           ownerAction =
+                                                                               nil;
+                                                                       NSDictionary *mouseBindings =
+                                                                           [[NSUserDefaults
+                                                                               standardUserDefaults]
+                                                                               dictionaryForKey:
+                                                                                   @"mouseFortniteBindings"];
 
-                       // Check for system keys
-                       if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
-                         UIAlertController *errorAlert = [UIAlertController
-                             alertControllerWithTitle:@"Invalid Key"
-                                              message:@"Cannot use system keys "
-                                                      @"(Alt, P)"
-                                       preferredStyle:
-                                           UIAlertControllerStyleAlert];
-                         [errorAlert
-                             addAction:
-                                 [UIAlertAction
-                                     actionWithTitle:@"OK"
-                                               style:UIAlertActionStyleDefault
-                                             handler:nil]];
-                         [strongSelf presentViewController:errorAlert
-                                                  animated:YES
+                                                                       for (
+                                                                           NSString
+                                                                               *codeStr in
+                                                                                   mouseBindings) {
+                                                                         if ([codeStr
+                                                                                 integerValue] ==
+                                                                             buttonCode) {
+                                                                           // Find
+                                                                           // the
+                                                                           // action
+                                                                           // name
+                                                                           // for
+                                                                           // this
+                                                                           // mouse
+                                                                           // binding
+                                                                           for (
+                                                                               NSDictionary
+                                                                                   *info in strongSelf
+                                                                                       .cachedFortniteActions) {
+                                                                             GCKeyCode defaultKey =
+                                                                                 [info[@"default"]
+                                                                                     integerValue];
+                                                                             GCKeyCode storedDef =
+                                                                                 [mouseBindings
+                                                                                         [codeStr]
+                                                                                     integerValue];
+                                                                             if (defaultKey ==
+                                                                                 storedDef) {
+                                                                               NSString
+                                                                                   *candidate = info
+                                                                                       [@"action"];
+                                                                               // If it's the SAME action we are editing, it's not a conflict!
+                                                                               if (!
+                                                                                   [candidate
+                                                                                       isEqualToString:
+                                                                                           actionName]) {
+                                                                                 ownerAction =
+                                                                                     candidate;
+                                                                               }
+                                                                               break;
+                                                                             }
+                                                                           }
+                                                                           break;
+                                                                         }
+                                                                       }
+
+                                                                       if (!ownerAction) {
+                                                                         // Check
+                                                                         // Advanced
+                                                                         // Custom
+                                                                         // Remaps
+                                                                         if (mouseBindings
+                                                                                 [[@(buttonCode)
+                                                                                     stringValue]] ==
+                                                                             nil) {
+                                                                           ownerAction = [NSString
+                                                                               stringWithFormat:
+                                                                                   @"another binding (%@)",
+                                                                                   getKeyName([existingTarget
+                                                                                       integerValue])];
+                                                                         }
+                                                                       }
+
+                                                                       if (ownerAction) {
+                                                                         NSString *message = [NSString
+                                                                             stringWithFormat:
+                                                                                 @"%@ is already bound to %@. This will unbind it. Continue?",
+                                                                                 getKeyName(
+                                                                                     buttonCode),
+                                                                                 ownerAction];
+                                                                         UIAlertController
+                                                                             *conflictAlert = [UIAlertController
+                                                                                 alertControllerWithTitle:
+                                                                                     @"Remap Conflict"
+                                                                                                  message:
+                                                                                                      message
+                                                                                           preferredStyle:
+                                                                                               UIAlertControllerStyleAlert];
+                                                                         [conflictAlert
+                                                                             addAction:
+                                                                                 [UIAlertAction
+                                                                                     actionWithTitle:
+                                                                                         @"Cancel"
+                                                                                               style:
+                                                                                                   UIAlertActionStyleCancel
+                                                                                             handler:
+                                                                                                 nil]];
+                                                                         [conflictAlert
+                                                                             addAction:
+                                                                                 [UIAlertAction
+                                                                                     actionWithTitle:
+                                                                                         @"Continue Anyway"
+                                                                                               style:
+                                                                                                   UIAlertActionStyleDestructive
+                                                                                             handler:^(
+                                                                                                 UIAlertAction
+                                                                                                     *_Nonnull a) {
+                                                                                               [strongSelf
+                                                                                                   stageMouseButtonKeybind:
+                                                                                                       buttonCode
+                                                                                                                 forAction:
+                                                                                                                     actionName];
+                                                                                               [strongSelf
+                                                                                                   refreshFortniteKeybinds];
+                                                                                             }]];
+                                                                         [strongSelf
+                                                                             presentViewController:
+                                                                                 conflictAlert
+                                                                                          animated:
+                                                                                              YES
+                                                                                        completion:
+                                                                                            nil];
+                                                                         return;
+                                                                       }
+                                                                     }
+
+                                                                     // No
+                                                                     // conflict
+                                                                     // or
+                                                                     // already
+                                                                     // mapped
+                                                                     // to
+                                                                     // itself,
+                                                                     // proceed
+                                                                     [strongSelf
+                                                                         stageMouseButtonKeybind:
+                                                                             buttonCode
+                                                                                       forAction:
+                                                                                           actionName];
+                                                                     [strongSelf
+                                                                         refreshFortniteKeybinds];
+                                                                   }];
+                                      });
+                     };
+
+                     keyCaptureCallback = ^(GCKeyCode keyCode) {
+                       dispatch_async(dispatch_get_main_queue(), ^{
+                         __strong typeof(weakSelf) strongSelf = weakSelf;
+                         if (!strongSelf)
+                           return;
+
+                         keyCaptureCallback = nil;
+                         mouseButtonCaptureCallback = nil;
+                         [strongSelf.presentedViewController
+                             dismissViewControllerAnimated:YES
                                                 completion:nil];
-                         return;
-                       }
 
-                       // Check for conflicts
-                       NSString *conflictAction =
-                           [strongSelf findActionUsingKey:keyCode
-                                          excludingAction:actionName];
-                       NSString *customRemapConflict =
-                           [strongSelf findCustomRemapUsingKey:keyCode];
-
-                       if (conflictAction || customRemapConflict) {
-                         // Build conflict message without bullet points
-                         NSMutableString *message = [NSMutableString string];
-
-                         if (conflictAction && customRemapConflict) {
-                           [message appendFormat:
-                                        @"%@ is currently bound to %@ in "
-                                        @"Fortnite Keybinds and is also used "
-                                        @"in Advanced Custom Remaps (%@). This "
-                                        @"will create conflicts. Continue?",
-                                        getKeyName(keyCode), conflictAction,
-                                        customRemapConflict];
-                         } else if (conflictAction) {
-                           [message
-                               appendFormat:
-                                   @"%@ is currently bound to %@. Remapping "
-                                   @"will create a conflict. Continue?",
-                                   getKeyName(keyCode), conflictAction];
-                         } else {
-                           [message
-                               appendFormat:@"%@ is used in Advanced Custom "
-                                            @"Remaps (%@). This will create a "
-                                            @"conflict. Continue?",
-                                            getKeyName(keyCode),
-                                            customRemapConflict];
+                         // Check for system keys
+                         if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
+                           UIAlertController *errorAlert = [UIAlertController
+                               alertControllerWithTitle:@"Invalid Key"
+                                                message:
+                                                    @"Cannot use system keys "
+                                                    @"(Alt, P)"
+                                         preferredStyle:
+                                             UIAlertControllerStyleAlert];
+                           [errorAlert
+                               addAction:
+                                   [UIAlertAction
+                                       actionWithTitle:@"OK"
+                                                 style:UIAlertActionStyleDefault
+                                               handler:nil]];
+                           [strongSelf presentViewController:errorAlert
+                                                    animated:YES
+                                                  completion:nil];
+                           return;
                          }
 
-                         UIAlertController *conflictAlert = [UIAlertController
-                             alertControllerWithTitle:@"Key Conflict"
-                                              message:message
-                                       preferredStyle:
-                                           UIAlertControllerStyleAlert];
+                         // Check for conflicts
+                         NSString *conflictAction =
+                             [strongSelf findActionUsingKey:keyCode
+                                            excludingAction:actionName];
+                         NSString *customRemapConflict =
+                             [strongSelf findCustomRemapUsingKey:keyCode];
 
-                         [conflictAlert
-                             addAction:
-                                 [UIAlertAction
-                                     actionWithTitle:@"Cancel"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
-                         [conflictAlert
-                             addAction:
-                                 [UIAlertAction
-                                     actionWithTitle:@"Continue Anyway"
-                                               style:
-                                                   UIAlertActionStyleDestructive
-                                             handler:^(
-                                                 UIAlertAction
-                                                     *_Nonnull alertAction) {
-                                               // User confirmed - apply the
-                                               // change
-                                               [strongSelf
-                                                   stageKeybindChange:actionName
-                                                               newKey:keyCode];
-                                               [strongSelf
-                                                   refreshFortniteKeybinds];
-                                             }]];
+                         if (conflictAction || customRemapConflict) {
+                           // Build conflict message without bullet points
+                           NSMutableString *message = [NSMutableString string];
 
-                         [strongSelf presentViewController:conflictAlert
-                                                  animated:YES
-                                                completion:nil];
-                       } else {
-                         // No conflict - apply directly
-                         [strongSelf stageKeybindChange:actionName
-                                                 newKey:keyCode];
-                         [strongSelf refreshFortniteKeybinds];
-                       }
-                     });
-                   };
-                 }];
+                           if (conflictAction && customRemapConflict) {
+                             [message
+                                 appendFormat:
+                                     @"%@ is currently bound to %@ in "
+                                     @"Fortnite Keybinds and is also used "
+                                     @"in Advanced Custom Remaps (%@). This "
+                                     @"will create conflicts. Continue?",
+                                     getKeyName(keyCode), conflictAction,
+                                     customRemapConflict];
+                           } else if (conflictAction) {
+                             [message
+                                 appendFormat:
+                                     @"%@ is currently bound to %@. Remapping "
+                                     @"will create a conflict. Continue?",
+                                     getKeyName(keyCode), conflictAction];
+                           } else {
+                             [message appendFormat:
+                                          @"%@ is used in Advanced Custom "
+                                          @"Remaps (%@). This will create a "
+                                          @"conflict. Continue?",
+                                          getKeyName(keyCode),
+                                          customRemapConflict];
+                           }
+
+                           UIAlertController *conflictAlert = [UIAlertController
+                               alertControllerWithTitle:@"Key Conflict"
+                                                message:message
+                                         preferredStyle:
+                                             UIAlertControllerStyleAlert];
+
+                           [conflictAlert
+                               addAction:
+                                   [UIAlertAction
+                                       actionWithTitle:@"Cancel"
+                                                 style:UIAlertActionStyleCancel
+                                               handler:nil]];
+                           [conflictAlert
+                               addAction:
+                                   [UIAlertAction
+                                       actionWithTitle:@"Continue Anyway"
+                                                 style:
+                                                     UIAlertActionStyleDestructive
+                                               handler:^(
+                                                   UIAlertAction
+                                                       *_Nonnull alertAction) {
+                                                 // User confirmed - apply the
+                                                 // change
+                                                 [strongSelf
+                                                     stageKeybindChange:
+                                                         actionName
+                                                                 newKey:
+                                                                     keyCode];
+                                                 [strongSelf
+                                                     refreshFortniteKeybinds];
+                                               }]];
+
+                           [strongSelf presentViewController:conflictAlert
+                                                    animated:YES
+                                                  completion:nil];
+                         } else {
+                           // No conflict - apply directly
+                           [strongSelf stageKeybindChange:actionName
+                                                   newKey:keyCode];
+                           [strongSelf refreshFortniteKeybinds];
+                         }
+                       });
+                     };
+                   }];
 }
 
 // Find which action is using a specific key (returns nil if none or if it's the
@@ -3239,6 +3542,12 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   for (NSString *action in self.stagedKeybinds) {
     NSNumber *newKey = self.stagedKeybinds[action];
 
+    // Mouse button bindings (code >= MOUSE_BUTTON_MIDDLE) are stored
+    // separately in mouseFortniteBindings by stageMouseButtonKeybind — skip
+    // them here.
+    if ([newKey integerValue] >= MOUSE_BUTTON_MIDDLE)
+      continue;
+
     // OPTIMIZED: O(1) hash lookup instead of O(n) loop
     NSNumber *defaultKeyNum = self.actionToDefaultKeyMap[action];
     GCKeyCode defaultKey = defaultKeyNum ? [defaultKeyNum integerValue] : 0;
@@ -3276,6 +3585,26 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   if (self.stagedKeybinds.count == 0)
     return;
 
+  // If any staged entry was a mouse button binding, remove it from
+  // mouseFortniteBindings
+  NSMutableDictionary *mouseBindings = [[[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"] mutableCopy];
+  BOOL mouseChanged = NO;
+  for (NSString *action in self.stagedKeybinds) {
+    NSNumber *stagedVal = self.stagedKeybinds[action];
+    if ([stagedVal integerValue] >= MOUSE_BUTTON_MIDDLE && mouseBindings) {
+      [mouseBindings
+          removeObjectForKey:[@([stagedVal integerValue]) stringValue]];
+      mouseChanged = YES;
+    }
+  }
+  if (mouseChanged) {
+    [[NSUserDefaults standardUserDefaults] setObject:mouseBindings
+                                              forKey:@"mouseFortniteBindings"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    loadFortniteKeybinds();
+  }
+
   // Clear all staged changes
   [self.stagedKeybinds removeAllObjects];
 
@@ -3288,7 +3617,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                color:[UIColor colorWithRed:1.0 green:0.9 blue:0.3 alpha:1.0]];
 }
 
-// Sync Fortnite keybinds into the keyRemappings table (O(1) lookup, called on save)
+// Sync Fortnite keybinds into the keyRemappings table (O(1) lookup, called on
+// save)
 
 // Reset a single keybind to default
 - (void)resetKeybindTapped:(UIButton *)sender {
@@ -3329,10 +3659,108 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 }
 
 // Perform the actual reset (helper method)
+
+// Bind a Fortnite action to a mouse button.
+// Stores mouseCode → currentEffectiveKey in keyRemappings (same hot path as
+// Advanced Remaps). Also records in mouseFortniteBindings so the UI knows it's
+// a Fortnite binding (keeps it out of the Advanced Remaps display list).
+- (void)stageMouseButtonKeybind:(int)mouseCode
+                      forAction:(NSString *)actionName {
+  // Find the default key for this action
+  GCKeyCode defaultKey = 0;
+  for (NSDictionary *info in self.cachedFortniteActions) {
+    if ([info[@"action"] isEqualToString:actionName]) {
+      defaultKey = [info[@"default"] integerValue];
+      break;
+    }
+  }
+  if (defaultKey == 0)
+    return;
+
+  // Get the CURRENT effective keyboard key for this action (accounts for
+  // keyboard remaps). e.g. if Use is remapped from E→G, we store G not E —
+  // buttonForKeyCode: needs a real key.
+  GCKeyCode effectiveKey = [self getCurrentKeyForAction:actionName
+                                             defaultKey:defaultKey];
+  // If getCurrentKeyForAction returns a mouse code (another mouse binding),
+  // fall back to default
+  if (effectiveKey >= MOUSE_BUTTON_MIDDLE)
+    effectiveKey = defaultKey;
+  if (effectiveKey == 0)
+    return;
+
+  // Remove any existing mouse binding for this action first
+  [self clearMouseBindingForAction:actionName];
+
+  // Remove any prior remap on this mouse button
+  [keyRemappings removeObjectForKey:@(mouseCode)];
+
+  // Store mouseCode → effectiveKey in keyRemappings (same hot path as
+  // Advanced Remaps)
+  keyRemappings[@(mouseCode)] = @(effectiveKey);
+  saveKeyRemappings();
+
+  // Also tag in mouseFortniteBindings so refreshKeyRemapRows skips it
+  NSMutableDictionary *mouseBindings = [[[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"] mutableCopy];
+  if (!mouseBindings)
+    mouseBindings = [NSMutableDictionary dictionary];
+  mouseBindings[[@(mouseCode) stringValue]] =
+      @(defaultKey); // store defaultKey for reverse lookup
+  [[NSUserDefaults standardUserDefaults] setObject:mouseBindings
+                                            forKey:@"mouseFortniteBindings"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+
+  // Stage a display entry so the row turns yellow and shows the button name
+  self.stagedKeybinds[actionName] = @(mouseCode);
+  [self updateApplyChangesButton];
+}
+
+- (void)clearMouseBindingForAction:(NSString *)actionName {
+  NSMutableDictionary *mouseBindings = [[[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"] mutableCopy];
+  if (!mouseBindings)
+    return;
+
+  // Find and remove all mouse codes bound to this action, also removing from
+  // keyRemappings
+  NSMutableArray *toRemove = [NSMutableArray array];
+  for (NSString *codeString in mouseBindings) {
+    // Check if this entry belongs to this action by comparing stored
+    // defaultKey
+    GCKeyCode storedDefault =
+        (GCKeyCode)[[mouseBindings objectForKey:codeString] integerValue];
+    GCKeyCode actionDefault = 0;
+    for (NSDictionary *info in self.cachedFortniteActions) {
+      if ([info[@"action"] isEqualToString:actionName]) {
+        actionDefault = [info[@"default"] integerValue];
+        break;
+      }
+    }
+    if (storedDefault == actionDefault && actionDefault != 0) {
+      [toRemove addObject:codeString];
+      // Also remove from keyRemappings so the hot path is clean
+      int mouseCode = [codeString intValue];
+      [keyRemappings removeObjectForKey:@(mouseCode)];
+    }
+  }
+  if (toRemove.count == 0)
+    return;
+  for (NSString *key in toRemove)
+    [mouseBindings removeObjectForKey:key];
+  [[NSUserDefaults standardUserDefaults] setObject:mouseBindings
+                                            forKey:@"mouseFortniteBindings"];
+  [[NSUserDefaults standardUserDefaults] synchronize];
+  saveKeyRemappings();
+}
+
 - (void)performResetForAction:(NSString *)action
                    defaultKey:(GCKeyCode)defaultKey {
   // Remove from staged changes
   [self.stagedKeybinds removeObjectForKey:action];
+
+  // Remove any mouse button binding for this action
+  [self clearMouseBindingForAction:action];
 
   // Remove from saved bindings
   NSMutableDictionary *savedBindings = [[[NSUserDefaults standardUserDefaults]
@@ -3379,12 +3807,28 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                               [[NSUserDefaults standardUserDefaults]
                                   removeObjectForKey:@"fortniteKeybinds"];
 
+                              // Clear mouse Fortnite bindings (UI metadata)
+                              [[NSUserDefaults standardUserDefaults]
+                                  removeObjectForKey:@"mouseFortniteBindings"];
+
+                              // Clear all custom remaps (keyboard + mouse
+                              // button/scroll)
+                              [[NSUserDefaults standardUserDefaults]
+                                  removeObjectForKey:kKeyRemapKey];
+
+                              // Clear in-memory remap dictionaries
+                              [keyRemappings removeAllObjects];
+
                               // CRITICAL: Reload Fortnite keybinds into fast
                               // array (clears it)
                               loadFortniteKeybinds();
 
+                              // Reload key remappings (clears arrays)
+                              loadKeyRemappings();
+
                               // Refresh UI
                               [self refreshFortniteKeybinds];
+                              [self refreshKeyRemapRows];
                               [self updateApplyChangesButton];
 
                               // Show feedback
@@ -3413,7 +3857,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   CGFloat rowY = 0;
   CGFloat contentWidth = 290;
 
-  // Recreate all Fortnite keybind rows (same structure as in createKeyRemapTab)
+  // Recreate all Fortnite keybind rows (same structure as in
+  // createKeyRemapTab)
   NSArray *keybindCategories = @[
     @{
       @"title" : @"MOVEMENT",
@@ -3513,8 +3958,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
 // Recalculate the total content height for the key remap tab
 - (void)recalculateKeyRemapContentHeight {
-  // Simply get the Add button's position and add button height + bottom margin
-  // This is much simpler and matches exactly what Sensitivity tab does
+  // Simply get the Add button's position and add button height + bottom
+  // margin This is much simpler and matches exactly what Sensitivity tab does
   if (!self.addRemapButton)
     return;
 
@@ -3628,14 +4073,15 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                    action:@selector(selectFolderTapped:)
          forControlEvents:UIControlEventTouchUpInside];
   [self.containerTab addSubview:folderButton];
-  y += 60;
+  y += 44; // button height
+  y += 16; // 16pt gap above divider
 
   // Divider
   UIView *divider1 = [[UIView alloc]
       initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
   divider1.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
   [self.containerTab addSubview:divider1];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   // Settings Import/Export section
   UILabel *importExportLabel = [[UILabel alloc]
@@ -3712,17 +4158,69 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                    action:@selector(importSettings)
          forControlEvents:UIControlEventTouchUpInside];
   [self.containerTab addSubview:importButton];
-  y += 48;
+  y += 36; // exact button height — no baked-in padding
 
-  // Feedback label for container tab
+  // Feedback label — anchored over the button area, out of the vertical flow
+  // (alpha 0 by default; never contributes to layout spacing)
   UILabel *containerFeedbackLabel = [[UILabel alloc]
-      initWithFrame:CGRectMake(leftMargin, y, contentWidth, 24)];
+      initWithFrame:CGRectMake(leftMargin, y - 36, contentWidth, 24)];
   containerFeedbackLabel.textAlignment = NSTextAlignmentCenter;
   containerFeedbackLabel.font = [UIFont systemFontOfSize:13
                                                   weight:UIFontWeightSemibold];
   containerFeedbackLabel.alpha = 0;
   containerFeedbackLabel.tag = 8889; // Unique tag for container feedback
   [self.containerTab addSubview:containerFeedbackLabel];
+  y += 16; // 16pt gap above divider
+
+  // Divider
+  UIView *divider2 = [[UIView alloc]
+      initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
+  divider2.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
+  [self.containerTab addSubview:divider2];
+  y += 16; // 16pt gap below divider
+
+  // Window Settings section
+  UILabel *windowSettingsLabel = [[UILabel alloc]
+      initWithFrame:CGRectMake(leftMargin, y, contentWidth, 20)];
+  windowSettingsLabel.text = @"Window Settings";
+  windowSettingsLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+  windowSettingsLabel.font = [UIFont systemFontOfSize:13
+                                               weight:UIFontWeightMedium];
+  windowSettingsLabel.textAlignment = NSTextAlignmentCenter;
+  [self.containerTab addSubview:windowSettingsLabel];
+  y += 28;
+
+  // Borderless Window Row
+  UIView *borderlessRow = [[UIView alloc]
+      initWithFrame:CGRectMake(leftMargin, y, contentWidth, 48)];
+  borderlessRow.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.05];
+  borderlessRow.layer.cornerRadius = 8;
+  [self.containerTab addSubview:borderlessRow];
+
+  UILabel *borderlessLabel =
+      [[UILabel alloc] initWithFrame:CGRectMake(16, 0, contentWidth - 80, 48)];
+  borderlessLabel.text = @"Borderless Windowed";
+  borderlessLabel.textColor = [UIColor whiteColor];
+  borderlessLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+  [borderlessRow addSubview:borderlessLabel];
+
+  UISwitch *borderlessSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+  // Standard UISwitch size is ~51x31.
+  // Center X = contentWidth - 16 (padding) - 25.5 (half width) = contentWidth
+  // - 41.5
+  borderlessSwitch.center = CGPointMake(contentWidth - 42, 24);
+  borderlessSwitch.onTintColor = [UIColor colorWithRed:0.0
+                                                 green:0.47
+                                                  blue:1.0
+                                                 alpha:1.0];
+  borderlessSwitch.on = isBorderlessModeEnabled;
+  [borderlessSwitch addTarget:self
+                       action:@selector(borderlessToggleChanged:)
+             forControlEvents:UIControlEventValueChanged];
+  [borderlessRow addSubview:borderlessSwitch];
+  y += 48 + 20; // row height + 20pt bottom margin
+
+  self.containerTab.frame = CGRectMake(0, 0, 330, y);
 }
 
 // Create Quick Start tab — single Build Mode Setup video card
@@ -3783,16 +4281,16 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   instruction.textAlignment = NSTextAlignmentCenter;
   instruction.numberOfLines = 0;
   [instructionBanner addSubview:instruction];
-  y += bannerH + 16;
+  y += bannerH + 16; // 16pt gap above divider
 
   // ========================================
-  // DIVIDER — matches other tabs exactly
+  // DIVIDER
   // ========================================
   UIView *div = [[UIView alloc]
       initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
   div.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
   [content addSubview:div];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   // ========================================
   // VIDEO CARD — full width, no wrapper box
@@ -3808,16 +4306,16 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   card1.frame =
       CGRectMake(leftMargin, y, contentWidth, card1.bounds.size.height);
   [content addSubview:card1];
-  y += card1.bounds.size.height + 16;
+  y += card1.bounds.size.height + 4; // FnVideoCardView has 12pt bottom padding baked in, so 4+12 = 16pt total gap above divider
 
   // ========================================
-  // LINE SPACER — matches other tabs
+  // LINE SPACER
   // ========================================
   UIView *spacer = [[UIView alloc]
       initWithFrame:CGRectMake(leftMargin + 40, y, contentWidth - 80, 1)];
   spacer.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
   [content addSubview:spacer];
-  y += 20;
+  y += 16; // 16pt gap below divider
 
   // ========================================
   // "Opening Settings" CARD
@@ -3871,129 +4369,68 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   y += openCardF.size.height + 10;
 
   // ========================================
-  // "Lock Cursor" + "Unlock Cursor" ROW
+  // "Lock / Unlock Cursor" — single full-width card
   // ========================================
-  CGFloat halfW = (cardW - 8) / 2;
+  UIView *lockUnlockCard =
+      [[UIView alloc] initWithFrame:CGRectMake(leftMargin, y, cardW, 10)];
+  lockUnlockCard.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
+  lockUnlockCard.layer.cornerRadius = 8;
+  lockUnlockCard.layer.borderWidth = 0.5;
+  lockUnlockCard.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
+  [content addSubview:lockUnlockCard];
 
-  // — Lock Cursor card (left) —
-  UIView *lockCard =
-      [[UIView alloc] initWithFrame:CGRectMake(leftMargin, y, halfW, 10)];
-  lockCard.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
-  lockCard.layer.cornerRadius = 8;
-  lockCard.layer.borderWidth = 0.5;
-  lockCard.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
-  [content addSubview:lockCard];
+  UILabel *luTitle =
+      [[UILabel alloc] initWithFrame:CGRectMake(10, 10, cardW - 20, 16)];
+  luTitle.text = @"Lock / Unlock Cursor";
+  luTitle.textColor = [UIColor whiteColor];
+  luTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+  [lockUnlockCard addSubview:luTitle];
 
-  UILabel *lockTitle =
-      [[UILabel alloc] initWithFrame:CGRectMake(10, 10, halfW - 20, 16)];
-  lockTitle.text = @"Lock Cursor";
-  lockTitle.textColor = [UIColor whiteColor];
-  lockTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-  [lockCard addSubview:lockTitle];
+  UILabel *luBadge1 = [[UILabel alloc] initWithFrame:CGRectMake(10, 32, 32, 24)];
+  luBadge1.text = @"L⌥";
+  luBadge1.textColor = [UIColor whiteColor];
+  luBadge1.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+  luBadge1.textAlignment = NSTextAlignmentCenter;
+  luBadge1.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
+  luBadge1.layer.cornerRadius = 5;
+  luBadge1.layer.borderWidth = 0.5;
+  luBadge1.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
+  luBadge1.clipsToBounds = YES;
+  [lockUnlockCard addSubview:luBadge1];
 
-  // L⌥ badge
-  UILabel *ltBadge = [[UILabel alloc] initWithFrame:CGRectMake(10, 32, 32, 24)];
-  ltBadge.text = @"L⌥";
-  ltBadge.textColor = [UIColor whiteColor];
-  ltBadge.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-  ltBadge.textAlignment = NSTextAlignmentCenter;
-  ltBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
-  ltBadge.layer.cornerRadius = 5;
-  ltBadge.layer.borderWidth = 0.5;
-  ltBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
-  ltBadge.clipsToBounds = YES;
-  [lockCard addSubview:ltBadge];
+  UILabel *luPlus = [[UILabel alloc] initWithFrame:CGRectMake(46, 32, 16, 24)];
+  luPlus.text = @"+";
+  luPlus.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+  luPlus.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+  luPlus.textAlignment = NSTextAlignmentCenter;
+  [lockUnlockCard addSubview:luPlus];
 
-  // "+" label
-  UILabel *plusLabel =
-      [[UILabel alloc] initWithFrame:CGRectMake(46, 32, 16, 24)];
-  plusLabel.text = @"+";
-  plusLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
-  plusLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-  plusLabel.textAlignment = NSTextAlignmentCenter;
-  [lockCard addSubview:plusLabel];
+  UILabel *luBadge2 = [[UILabel alloc] initWithFrame:CGRectMake(64, 32, 40, 24)];
+  luBadge2.text = @"Click";
+  luBadge2.textColor = [UIColor whiteColor];
+  luBadge2.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+  luBadge2.textAlignment = NSTextAlignmentCenter;
+  luBadge2.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
+  luBadge2.layer.cornerRadius = 5;
+  luBadge2.layer.borderWidth = 0.5;
+  luBadge2.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
+  luBadge2.clipsToBounds = YES;
+  [lockUnlockCard addSubview:luBadge2];
 
-  // "Click" badge
-  UILabel *clickBadge =
-      [[UILabel alloc] initWithFrame:CGRectMake(64, 32, 40, 24)];
-  clickBadge.text = @"Click";
-  clickBadge.textColor = [UIColor whiteColor];
-  clickBadge.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-  clickBadge.textAlignment = NSTextAlignmentCenter;
-  clickBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
-  clickBadge.layer.cornerRadius = 5;
-  clickBadge.layer.borderWidth = 0.5;
-  clickBadge.layer.borderColor =
-      [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
-  clickBadge.clipsToBounds = YES;
-  [lockCard addSubview:clickBadge];
+  UILabel *luDesc =
+      [[UILabel alloc] initWithFrame:CGRectMake(10, 62, cardW - 20, 10)];
+  luDesc.text = @"Hold Left Option and click to lock or unlock your mouse cursor to the game window.";
+  luDesc.textColor = [UIColor colorWithWhite:0.65 alpha:1.0];
+  luDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+  luDesc.numberOfLines = 0;
+  CGSize luDescSize = [luDesc sizeThatFits:CGSizeMake(cardW - 20, CGFLOAT_MAX)];
+  luDesc.frame = CGRectMake(10, 62, cardW - 20, luDescSize.height);
+  [lockUnlockCard addSubview:luDesc];
 
-  UILabel *lockDesc =
-      [[UILabel alloc] initWithFrame:CGRectMake(10, 62, halfW - 20, 10)];
-  lockDesc.text = @"Locks your mouse cursor to the game window.";
-  lockDesc.textColor = [UIColor colorWithWhite:0.65 alpha:1.0];
-  lockDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-  lockDesc.numberOfLines = 0;
-  CGSize lockDescSize =
-      [lockDesc sizeThatFits:CGSizeMake(halfW - 20, CGFLOAT_MAX)];
-  lockDesc.frame = CGRectMake(10, 62, halfW - 20, lockDescSize.height);
-  [lockCard addSubview:lockDesc];
-  CGRect lockCardF = lockCard.frame;
-  lockCardF.size.height = 62 + lockDescSize.height + 12;
-  lockCard.frame = lockCardF;
-
-  // — Unlock Cursor card (right) —
-  UIView *unlockCard = [[UIView alloc]
-      initWithFrame:CGRectMake(leftMargin + halfW + 8, y, halfW, 10)];
-  unlockCard.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
-  unlockCard.layer.cornerRadius = 8;
-  unlockCard.layer.borderWidth = 0.5;
-  unlockCard.layer.borderColor =
-      [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
-  [content addSubview:unlockCard];
-
-  UILabel *unlockTitle =
-      [[UILabel alloc] initWithFrame:CGRectMake(10, 10, halfW - 20, 16)];
-  unlockTitle.text = @"Unlock Cursor";
-  unlockTitle.textColor = [UIColor whiteColor];
-  unlockTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-  [unlockCard addSubview:unlockTitle];
-
-  // L⌥ badge (unlock — no + Click)
-  UILabel *ltBadge2 =
-      [[UILabel alloc] initWithFrame:CGRectMake(10, 32, 32, 24)];
-  ltBadge2.text = @"L⌥";
-  ltBadge2.textColor = [UIColor whiteColor];
-  ltBadge2.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-  ltBadge2.textAlignment = NSTextAlignmentCenter;
-  ltBadge2.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
-  ltBadge2.layer.cornerRadius = 5;
-  ltBadge2.layer.borderWidth = 0.5;
-  ltBadge2.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
-  ltBadge2.clipsToBounds = YES;
-  [unlockCard addSubview:ltBadge2];
-
-  UILabel *unlockDesc =
-      [[UILabel alloc] initWithFrame:CGRectMake(10, 62, halfW - 20, 10)];
-  unlockDesc.text = @"Unlocks your mouse cursor from the game window.";
-  unlockDesc.textColor = [UIColor colorWithWhite:0.65 alpha:1.0];
-  unlockDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-  unlockDesc.numberOfLines = 0;
-  CGSize unlockDescSize =
-      [unlockDesc sizeThatFits:CGSizeMake(halfW - 20, CGFLOAT_MAX)];
-  unlockDesc.frame = CGRectMake(10, 62, halfW - 20, unlockDescSize.height);
-  [unlockCard addSubview:unlockDesc];
-  CGRect unlockCardF = unlockCard.frame;
-  unlockCardF.size.height = 62 + unlockDescSize.height + 12;
-  unlockCard.frame = unlockCardF;
-
-  // Equalize both side-by-side cards to the taller one
-  CGFloat pairH = MAX(lockCardF.size.height, unlockCardF.size.height);
-  lockCardF.size.height = pairH;
-  lockCard.frame = lockCardF;
-  unlockCardF.size.height = pairH;
-  unlockCard.frame = unlockCardF;
-  y += pairH + 16;
+  CGRect luCardF = lockUnlockCard.frame;
+  luCardF.size.height = 62 + luDescSize.height + 12;
+  lockUnlockCard.frame = luCardF;
+  y += luCardF.size.height + 20; // 20pt bottom margin
 
   // Save content height so switchToTab: can set self.scrollView.contentSize,
   // exactly like sensitivityContentHeight and keyRemapContentHeight.
@@ -4076,14 +4513,13 @@ static NSString *getKeyName(GCKeyCode keyCode) {
     self.scrollView.contentSize = CGSizeMake(330, self.keyRemapContentHeight);
   } else if (tab == PopupTabBuildMode) {
     [self.scrollView addSubview:self.buildModeTab];
-    self.scrollView.contentSize = CGSizeMake(330, 400);
+    self.scrollView.contentSize = CGSizeMake(330, self.buildModeTab.frame.size.height);
   } else if (tab == PopupTabContainer) {
     [self.scrollView addSubview:self.containerTab];
-    self.scrollView.contentSize = CGSizeMake(330, 400);
+    self.scrollView.contentSize = CGSizeMake(330, self.containerTab.frame.size.height);
   } else if (tab == PopupTabQuickStart) {
     [self.scrollView addSubview:self.quickStartTab];
-    self.scrollView.contentSize =
-        CGSizeMake(330, self.quickStartContentHeight);
+    self.scrollView.contentSize = CGSizeMake(330, self.quickStartContentHeight);
   }
 
   // Reset scroll position to top
@@ -4094,8 +4530,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (void)addKeyRemapTapped {
   // Show instruction alert
   UIAlertController *alert = [UIAlertController
-      alertControllerWithTitle:@"Add Key Remap"
-                       message:@"Press a keyboard key to use as source"
+      alertControllerWithTitle:@"Add Custom Remap"
+                       message:@"Press a key or mouse button to use as source"
                 preferredStyle:UIAlertControllerStyleAlert];
 
   [alert addAction:[UIAlertAction
@@ -4103,31 +4539,33 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  style:UIAlertActionStyleCancel
                                handler:^(UIAlertAction *_Nonnull action) {
                                  keyCaptureCallback = nil;
+                                 mouseButtonCaptureCallback = nil;
                                }]];
 
   [self presentViewController:alert
                      animated:YES
                    completion:^{
-                     // Set up callback to capture keyboard key press only
                      __weak typeof(self) weakSelf = self;
 
-                     // Keyboard capture
-                     keyCaptureCallback = ^(GCKeyCode keyCode) {
+                     // Shared handler called with whatever input fired (key or
+                     // mouse button)
+                     void (^handleCapturedSource)(GCKeyCode) = ^(
+                         GCKeyCode capturedCode) {
                        dispatch_async(dispatch_get_main_queue(), ^{
                          __strong typeof(weakSelf) strongSelf = weakSelf;
                          if (!strongSelf)
                            return;
 
-                         // Clear callback
                          keyCaptureCallback = nil;
+                         mouseButtonCaptureCallback = nil;
 
-                         // Dismiss alert
                          [strongSelf.presentedViewController
                              dismissViewControllerAnimated:YES
                                                 completion:nil];
 
-                         // Check for system keys
-                         if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
+                         // Block system keys as source
+                         if (capturedCode == TRIGGER_KEY ||
+                             capturedCode == POPUP_KEY) {
                            UIAlertController *errorAlert = [UIAlertController
                                alertControllerWithTitle:@"Invalid Key"
                                                 message:@"Cannot remap system "
@@ -4146,9 +4584,18 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                            return;
                          }
 
-                         // Show target key picker
-                         [strongSelf showTargetKeyPickerForSourceKey:keyCode];
+                         [strongSelf
+                             showTargetKeyPickerForSourceKey:capturedCode];
                        });
+                     };
+
+                     // Keyboard capture
+                     keyCaptureCallback = ^(GCKeyCode keyCode) {
+                       handleCapturedSource(keyCode);
+                     };
+                     // Mouse button/scroll capture
+                     mouseButtonCaptureCallback = ^(int buttonCode) {
+                       handleCapturedSource((GCKeyCode)buttonCode);
                      };
                    }];
 }
@@ -4156,10 +4603,9 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (void)changeSourceKeyTapped:(UIButton *)sender {
   GCKeyCode oldSourceKey = sender.tag;
 
-  // Show alert
   UIAlertController *alert =
       [UIAlertController alertControllerWithTitle:@"Change Source Key"
-                                          message:@"Press a keyboard key"
+                                          message:@"Press a key or mouse button"
                                    preferredStyle:UIAlertControllerStyleAlert];
 
   [alert addAction:[UIAlertAction
@@ -4167,31 +4613,30 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  style:UIAlertActionStyleCancel
                                handler:^(UIAlertAction *_Nonnull action) {
                                  keyCaptureCallback = nil;
+                                 mouseButtonCaptureCallback = nil;
                                }]];
 
   [self presentViewController:alert
                      animated:YES
                    completion:^{
-                     // Set up callback to capture keyboard key press only
                      __weak typeof(self) weakSelf = self;
 
-                     // Keyboard capture
-                     keyCaptureCallback = ^(GCKeyCode keyCode) {
+                     void (^handleCaptured)(GCKeyCode) = ^(
+                         GCKeyCode capturedCode) {
                        dispatch_async(dispatch_get_main_queue(), ^{
                          __strong typeof(weakSelf) strongSelf = weakSelf;
                          if (!strongSelf)
                            return;
 
-                         // Clear callback
                          keyCaptureCallback = nil;
+                         mouseButtonCaptureCallback = nil;
 
-                         // Dismiss alert
                          [strongSelf.presentedViewController
                              dismissViewControllerAnimated:YES
                                                 completion:nil];
 
-                         // Check for system keys
-                         if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
+                         if (capturedCode == TRIGGER_KEY ||
+                             capturedCode == POPUP_KEY) {
                            UIAlertController *errorAlert = [UIAlertController
                                alertControllerWithTitle:@"Invalid Key"
                                                 message:@"Cannot remap system "
@@ -4210,22 +4655,17 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                            return;
                          }
 
-                         // Remove old mapping and add new one
+                         // Move old mapping to new source key
                          NSNumber *targetKey = keyRemappings[@(oldSourceKey)];
                          [keyRemappings removeObjectForKey:@(oldSourceKey)];
-                         keyRemappings[@(keyCode)] = targetKey;
-
-                         // CRITICAL: Save to persistent storage
+                         keyRemappings[@(capturedCode)] = targetKey;
                          saveKeyRemappings();
-
                          [strongSelf refreshKeyRemapRows];
-
-                         // Show confirmation
                          [strongSelf
                              showFeedback:[NSString
                                               stringWithFormat:
                                                   @"Source changed: %@ → %@",
-                                                  getKeyName(keyCode),
+                                                  getKeyName(capturedCode),
                                                   getKeyName(
                                                       [targetKey integerValue])]
                                     color:[UIColor colorWithRed:0.3
@@ -4233,6 +4673,13 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                                            blue:0.3
                                                           alpha:1.0]];
                        });
+                     };
+
+                     keyCaptureCallback = ^(GCKeyCode keyCode) {
+                       handleCaptured(keyCode);
+                     };
+                     mouseButtonCaptureCallback = ^(int buttonCode) {
+                       handleCaptured((GCKeyCode)buttonCode);
                      };
                    }];
 }
@@ -4242,10 +4689,10 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
   UIAlertController *alert = [UIAlertController
       alertControllerWithTitle:@"Change Target Key"
-                       message:[NSString
-                                   stringWithFormat:
-                                       @"Remapping: %@\nPress a keyboard key",
-                                       getKeyName(sourceKey)]
+                       message:[NSString stringWithFormat:
+                                             @"Remapping: %@\nPress a keyboard "
+                                             @"key for the target",
+                                             getKeyName(sourceKey)]
                 preferredStyle:UIAlertControllerStyleAlert];
 
   [alert addAction:[UIAlertAction
@@ -4253,31 +4700,28 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  style:UIAlertActionStyleCancel
                                handler:^(UIAlertAction *_Nonnull action) {
                                  keyCaptureCallback = nil;
+                                 mouseButtonCaptureCallback = nil;
                                }]];
 
   [self
       presentViewController:alert
                    animated:YES
                  completion:^{
-                   // Set up callback to capture keyboard key press only
                    __weak typeof(self) weakSelf = self;
 
-                   // Keyboard capture
                    keyCaptureCallback = ^(GCKeyCode keyCode) {
                      dispatch_async(dispatch_get_main_queue(), ^{
                        __strong typeof(weakSelf) strongSelf = weakSelf;
                        if (!strongSelf)
                          return;
 
-                       // Clear callback
                        keyCaptureCallback = nil;
+                       mouseButtonCaptureCallback = nil;
 
-                       // Dismiss alert
                        [strongSelf.presentedViewController
                            dismissViewControllerAnimated:YES
                                               completion:nil];
 
-                       // Check for system keys
                        if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
                          UIAlertController *errorAlert = [UIAlertController
                              alertControllerWithTitle:@"Invalid Key"
@@ -4297,15 +4741,30 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                          return;
                        }
 
-                       // Update the mapping with new target
+                       // Target must be a real keyboard key, not a mouse code
+                       if (isMouseInputCode(keyCode)) {
+                         UIAlertController *errorAlert = [UIAlertController
+                             alertControllerWithTitle:@"Invalid Target"
+                                              message:@"Target must be a "
+                                                      @"keyboard "
+                                                      @"key, not a mouse button"
+                                       preferredStyle:
+                                           UIAlertControllerStyleAlert];
+                         [errorAlert
+                             addAction:
+                                 [UIAlertAction
+                                     actionWithTitle:@"OK"
+                                               style:UIAlertActionStyleDefault
+                                             handler:nil]];
+                         [strongSelf presentViewController:errorAlert
+                                                  animated:YES
+                                                completion:nil];
+                         return;
+                       }
+
                        keyRemappings[@(sourceKey)] = @(keyCode);
-
-                       // CRITICAL: Save to persistent storage
                        saveKeyRemappings();
-
                        [strongSelf refreshKeyRemapRows];
-
-                       // Show confirmation
                        [strongSelf
                            showFeedback:
                                [NSString
@@ -4318,6 +4777,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                                         alpha:1.0]];
                      });
                    };
+                   // Don't set mouseButtonCaptureCallback for target — target
+                   // must be a keyboard key
                  }];
 }
 
@@ -4343,10 +4804,10 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (void)showTargetKeyPickerForSourceKey:(GCKeyCode)sourceKey {
   UIAlertController *alert = [UIAlertController
       alertControllerWithTitle:@"Select Target Key"
-                       message:[NSString
-                                   stringWithFormat:
-                                       @"Source: %@\nPress a keyboard key",
-                                       getKeyName(sourceKey)]
+                       message:[NSString stringWithFormat:
+                                             @"Source: %@\nPress a keyboard "
+                                             @"key for the target",
+                                             getKeyName(sourceKey)]
                 preferredStyle:UIAlertControllerStyleAlert];
 
   [alert addAction:[UIAlertAction
@@ -4354,31 +4815,28 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                  style:UIAlertActionStyleCancel
                                handler:^(UIAlertAction *_Nonnull action) {
                                  keyCaptureCallback = nil;
+                                 mouseButtonCaptureCallback = nil;
                                }]];
 
   [self
       presentViewController:alert
                    animated:YES
                  completion:^{
-                   // Set up callback to capture keyboard key press only
                    __weak typeof(self) weakSelf = self;
 
-                   // Keyboard capture
                    keyCaptureCallback = ^(GCKeyCode keyCode) {
                      dispatch_async(dispatch_get_main_queue(), ^{
                        __strong typeof(weakSelf) strongSelf = weakSelf;
                        if (!strongSelf)
                          return;
 
-                       // Clear callback
                        keyCaptureCallback = nil;
+                       mouseButtonCaptureCallback = nil;
 
-                       // Dismiss alert
                        [strongSelf.presentedViewController
                            dismissViewControllerAnimated:YES
                                               completion:nil];
 
-                       // Check for system keys
                        if (keyCode == TRIGGER_KEY || keyCode == POPUP_KEY) {
                          UIAlertController *errorAlert = [UIAlertController
                              alertControllerWithTitle:@"Invalid Key"
@@ -4398,23 +4856,48 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                          return;
                        }
 
-                       // Check for conflicts with Fortnite keybinds (both
-                       // source and target)
-                       NSString *sourceConflict =
-                           [strongSelf findFortniteActionUsingKey:sourceKey];
-                       NSString *targetConflict =
-                           [strongSelf findFortniteActionUsingKey:keyCode];
+                       // Target must be a real keyboard key
+                       if (isMouseInputCode(keyCode)) {
+                         UIAlertController *errorAlert = [UIAlertController
+                             alertControllerWithTitle:@"Invalid Target"
+                                              message:@"Target must be a "
+                                                      @"keyboard "
+                                                      @"key, not a mouse button"
+                                       preferredStyle:
+                                           UIAlertControllerStyleAlert];
+                         [errorAlert
+                             addAction:
+                                 [UIAlertAction
+                                     actionWithTitle:@"OK"
+                                               style:UIAlertActionStyleDefault
+                                             handler:nil]];
+                         [strongSelf presentViewController:errorAlert
+                                                  animated:YES
+                                                completion:nil];
+                         return;
+                       }
 
                        void (^createMapping)(void) = ^{
-                         // Create the mapping
+                         if (isMouseInputCode(sourceKey)) {
+                           NSMutableDictionary *mouseBindings =
+                               [[[NSUserDefaults standardUserDefaults]
+                                   dictionaryForKey:@"mouseFortniteBindings"]
+                                   mutableCopy];
+                           if (mouseBindings &&
+                               mouseBindings[[@(sourceKey) stringValue]]) {
+                             [mouseBindings
+                                 removeObjectForKey:[@(sourceKey) stringValue]];
+                             [[NSUserDefaults standardUserDefaults]
+                                 setObject:mouseBindings
+                                    forKey:@"mouseFortniteBindings"];
+                             [[NSUserDefaults standardUserDefaults]
+                                 synchronize];
+                           }
+                         }
+
                          keyRemappings[@(sourceKey)] = @(keyCode);
-
-                         // CRITICAL: Save to persistent storage
                          saveKeyRemappings();
-
                          [strongSelf refreshKeyRemapRows];
-
-                         // Show confirmation
                          [strongSelf
                              showFeedback:[NSString stringWithFormat:
                                                         @"Added: %@ → %@",
@@ -4426,10 +4909,64 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                                           alpha:1.0]];
                        };
 
-                       if (sourceConflict || targetConflict) {
-                         // Build conflict message without bullet points
-                         NSMutableString *message = [NSMutableString string];
+                       // Check for conflict — another remap already uses this
+                       // mouse button/scroll as its source. Warn the user it
+                       // will be unbound, same as keyboard remaps.
+                       if (isMouseInputCode(sourceKey)) {
+                         NSNumber *existingTarget = keyRemappings[@(sourceKey)];
+                         if (existingTarget != nil &&
+                             [existingTarget intValue] != 0 &&
+                             [existingTarget intValue] != sourceKey) {
+                           {
+                             NSString *message = [NSString
+                                 stringWithFormat:@"%@ is already mapped to "
+                                                  @"%@. Saving will "
+                                                  @"overwrite it. Continue?",
+                                                  getKeyName(sourceKey),
+                                                  getKeyName([existingTarget
+                                                      intValue])];
+                             UIAlertController *conflictAlert =
+                                 [UIAlertController
+                                     alertControllerWithTitle:@"Remap Conflict"
+                                                      message:message
+                                               preferredStyle:
+                                                   UIAlertControllerStyleAlert];
+                             [conflictAlert
+                                 addAction:
+                                     [UIAlertAction
+                                         actionWithTitle:@"Cancel"
+                                                   style:
+                                                       UIAlertActionStyleCancel
+                                                 handler:nil]];
+                             [conflictAlert
+                                 addAction:
+                                     [UIAlertAction
+                                         actionWithTitle:@"Continue Anyway"
+                                                   style:
+                                                       UIAlertActionStyleDestructive
+                                                 handler:^(UIAlertAction
+                                                               *_Nonnull a) {
+                                                   createMapping();
+                                                 }]];
+                             [strongSelf presentViewController:conflictAlert
+                                                      animated:YES
+                                                    completion:nil];
+                           }
+                         } else {
+                           createMapping();
+                         }
+                         return;
+                       }
 
+                       // Check for conflicts with Fortnite keybinds (keyboard
+                       // source only)
+                       NSString *sourceConflict =
+                           [strongSelf findFortniteActionUsingKey:sourceKey];
+                       NSString *targetConflict =
+                           [strongSelf findFortniteActionUsingKey:keyCode];
+
+                       if (sourceConflict || targetConflict) {
+                         NSMutableString *message = [NSMutableString string];
                          if (sourceConflict && targetConflict) {
                            [message
                                appendFormat:
@@ -4457,7 +4994,6 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                               message:message
                                        preferredStyle:
                                            UIAlertControllerStyleAlert];
-
                          [conflictAlert
                              addAction:
                                  [UIAlertAction
@@ -4471,20 +5007,19 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                                                style:
                                                    UIAlertActionStyleDestructive
                                              handler:^(
-                                                 UIAlertAction
-                                                     *_Nonnull alertAction) {
+                                                 UIAlertAction *_Nonnull a) {
                                                createMapping();
                                              }]];
-
                          [strongSelf presentViewController:conflictAlert
                                                   animated:YES
                                                 completion:nil];
                        } else {
-                         // No conflict - create directly
                          createMapping();
                        }
                      });
                    };
+                   // Don't set mouseButtonCaptureCallback for target picker —
+                   // target is always keyboard
                  }];
 }
 
@@ -4495,7 +5030,6 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                         fields:(NSArray<NSDictionary *> *)fields
                       isDouble:(BOOL)isDouble
                         toView:(UIView *)parentView {
-
   CGFloat leftMargin = 20;
   CGFloat contentWidth = 290;
   // Layout: title row top=10 h=18, subtitle top=30 h=14, fieldY=48,
@@ -4567,24 +5101,25 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
     UITextField *field = [[UITextField alloc]
         initWithFrame:CGRectMake(fieldX, fieldY + (isDouble ? 14 : 0),
-                                 fieldWidth, 28)];
-    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
-    field.textColor = [UIColor whiteColor];
-    field.layer.cornerRadius = 6;
+                                 fieldWidth, 24)];
+    field.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
+    field.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    field.layer.cornerRadius = 4;
+    field.borderStyle = UITextBorderStyleNone;
     field.keyboardType = UIKeyboardTypeDecimalPad;
     field.text =
         [NSString stringWithFormat:@"%.1f", [fieldInfo[@"value"] floatValue]];
     field.textAlignment = NSTextAlignmentCenter;
-    field.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    field.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
     field.delegate = self;
 
-    // Add change notification for real-time updates
     [field addTarget:self
                   action:@selector(sensitivityFieldChanged:)
         forControlEvents:UIControlEventEditingChanged];
 
     [section addSubview:field];
     [self setValue:field forKey:fieldInfo[@"field"]];
+    setShapeBorder(field, 4, 0.5, [UIColor colorWithWhite:0.35 alpha:1.0]);
   }
 
   return floor(y + sectionHeight + 8);
@@ -4759,14 +5294,18 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
   extern UIWindow *popupWindow;
-  if (!popupWindow) return;
+  if (!popupWindow)
+    return;
 
-  UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
-  CGRect screenBounds = scene ? scene.effectiveGeometry.coordinateSpace.bounds : CGRectMake(0, 0, 390, 844);
+  UIWindowScene *scene = (UIWindowScene *)
+      [[UIApplication sharedApplication].connectedScenes anyObject];
+  CGRect screenBounds = scene ? scene.effectiveGeometry.coordinateSpace.bounds
+                              : CGRectMake(0, 0, 390, 844);
 
-  // Use translation delta — move the window by exactly how much the finger moved,
-  // then reset to zero so each Changed event gives only the incremental delta.
-  // This avoids any coordinate space feedback loop caused by the window moving.
+  // Use translation delta — move the window by exactly how much the finger
+  // moved, then reset to zero so each Changed event gives only the
+  // incremental delta. This avoids any coordinate space feedback loop caused
+  // by the window moving.
   CGPoint delta = [gesture translationInView:nil];
   [gesture setTranslation:CGPointZero inView:nil];
 
@@ -4776,10 +5315,12 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
   // Constrain to screen bounds (keep at least 40px of panel visible)
   CGFloat minVisible = 40;
-  newFrame.origin.x = MAX(-newFrame.size.width + minVisible,
-                          MIN(screenBounds.size.width - minVisible, newFrame.origin.x));
-  newFrame.origin.y = MAX(-newFrame.size.height + minVisible,
-                          MIN(screenBounds.size.height - minVisible, newFrame.origin.y));
+  newFrame.origin.x =
+      MAX(-newFrame.size.width + minVisible,
+          MIN(screenBounds.size.width - minVisible, newFrame.origin.x));
+  newFrame.origin.y =
+      MAX(-newFrame.size.height + minVisible,
+          MIN(screenBounds.size.height - minVisible, newFrame.origin.y));
 
   popupWindow.frame = newFrame;
 }
@@ -5037,6 +5578,16 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 }
 
 // Folder selection for Fortnite data directory
+- (void)borderlessToggleChanged:(UISwitch *)sender {
+  isBorderlessModeEnabled = sender.isOn;
+  NSUserDefaults *prefs = tweakDefaults();
+  [prefs setBool:isBorderlessModeEnabled forKey:kBorderlessWindowKey];
+  [prefs synchronize];
+
+  // Apply changes immediately
+  updateBorderlessMode();
+}
+
 - (void)selectFolderTapped:(UIButton *)sender {
   if (@available(iOS 14.0, *)) {
     UIDocumentPickerViewController *picker =
@@ -5082,8 +5633,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
       setTitle:[NSString stringWithFormat:@"Discard Changes (%d)", changeCount]
       forState:UIControlStateNormal];
 
-  // Only animate when the enabled/disabled state actually flips — not on every
-  // keystroke
+  // Only animate when the enabled/disabled state actually flips — not on
+  // every keystroke
   BOOL shouldEnable = (changeCount > 0);
   if (shouldEnable != self.applySensitivityButton.enabled) {
     self.discardSensitivityButton.enabled = shouldEnable;
@@ -5099,91 +5650,93 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 }
 
 // Helper to apply "Custom vs Default" styling (based on SAVED value)
+// Set a pixel-perfect rounded border via CAShapeLayer (avoids CALayer border
+// corner artifacts)
+static void setShapeBorder(UIView *view, CGFloat radius, CGFloat width,
+                           UIColor *color) {
+  static NSString *const kBorderLayerName = @"fnmt_border";
+  // Remove existing border layer
+  for (CALayer *l in [view.layer.sublayers copy]) {
+    if ([l.name isEqualToString:kBorderLayerName]) {
+      [l removeFromSuperlayer];
+      break;
+    }
+  }
+  CAShapeLayer *border = [CAShapeLayer layer];
+  border.name = kBorderLayerName;
+  // Inset by half the line width so the stroke is fully inside the view
+  // bounds
+  CGRect inset = CGRectInset(view.bounds, width / 2.0, width / 2.0);
+  border.path = [UIBezierPath bezierPathWithRoundedRect:inset
+                                           cornerRadius:radius - width / 2.0]
+                    .CGPath;
+  border.fillColor = UIColor.clearColor.CGColor;
+  border.strokeColor = color.CGColor;
+  border.lineWidth = width;
+  [view.layer addSublayer:border];
+  // Remove CALayer border to avoid double rendering
+  view.layer.borderWidth = 0;
+  view.layer.cornerRadius = radius;
+}
+
 - (void)applyStyleToField:(UITextField *)field
                     saved:(float)savedVal
-               defaultVal:(float)defaultVal {
+               defaultVal:(float)defaultVal
+              currentText:(NSString *)currentText {
   float epsilon = 0.01f;
+  float currentVal = [currentText floatValue];
+  BOOL isUnsaved = fabsf(currentVal - savedVal) > epsilon;
   BOOL isNotDefault = fabsf(savedVal - defaultVal) > epsilon;
 
-  if (isNotDefault) {
-    // Custom: White background, Black text (matching keybinds)
-    field.backgroundColor = [UIColor colorWithWhite:0.9 alpha:1.0];
-    field.textColor = [UIColor colorWithWhite:0.15 alpha:1.0];
-  } else {
-    // Default: Dark background, White text
-    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+  field.layer.borderWidth = 0;
+
+  if (isUnsaved) {
+    field.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
     field.textColor = [UIColor whiteColor];
+    setShapeBorder(field, 4, 0.5,
+                   [UIColor colorWithRed:1.0 green:0.9 blue:0.3 alpha:1.0]);
+  } else if (isNotDefault) {
+    field.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
+    field.textColor = [UIColor whiteColor];
+    setShapeBorder(field, 4, 0.5, [UIColor colorWithWhite:0.65 alpha:1.0]);
+  } else {
+    field.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
+    field.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    setShapeBorder(field, 4, 0.5, [UIColor colorWithWhite:0.35 alpha:1.0]);
   }
 }
 
 // Update yellow borders and background/text colors on sensitivity fields
 - (void)updateSensitivityFieldBorders {
-  float epsilon = 0.01f;
-  UIColor *yellowBorder = [UIColor colorWithRed:1.0
-                                          green:0.9
-                                           blue:0.3
-                                          alpha:1.0];
-  UIColor *normalBorder = [UIColor colorWithWhite:0.25 alpha:0.4];
-
-  // Base XY field
-  float baseVal = [self.baseXYField.text floatValue];
-  BOOL baseChanged = fabsf(baseVal - self.originalBaseXY) > epsilon;
-  self.baseXYField.layer.borderWidth = baseChanged ? 2.5 : 0.5;
-  self.baseXYField.layer.borderColor =
-      baseChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.baseXYField
                     saved:self.originalBaseXY
-               defaultVal:6.4f];
+               defaultVal:6.4f
+              currentText:self.baseXYField.text];
 
-  // Look X field
-  float lookXVal = [self.lookXField.text floatValue];
-  BOOL lookXChanged = fabsf(lookXVal - self.originalLookX) > epsilon;
-  self.lookXField.layer.borderWidth = lookXChanged ? 2.5 : 0.5;
-  self.lookXField.layer.borderColor =
-      lookXChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.lookXField
                     saved:self.originalLookX
-               defaultVal:50.0f];
+               defaultVal:50.0f
+              currentText:self.lookXField.text];
 
-  // Look Y field
-  float lookYVal = [self.lookYField.text floatValue];
-  BOOL lookYChanged = fabsf(lookYVal - self.originalLookY) > epsilon;
-  self.lookYField.layer.borderWidth = lookYChanged ? 2.5 : 0.5;
-  self.lookYField.layer.borderColor =
-      lookYChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.lookYField
                     saved:self.originalLookY
-               defaultVal:50.0f];
+               defaultVal:50.0f
+              currentText:self.lookYField.text];
 
-  // Scope X field
-  float scopeXVal = [self.scopeXField.text floatValue];
-  BOOL scopeXChanged = fabsf(scopeXVal - self.originalScopeX) > epsilon;
-  self.scopeXField.layer.borderWidth = scopeXChanged ? 2.5 : 0.5;
-  self.scopeXField.layer.borderColor =
-      scopeXChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.scopeXField
                     saved:self.originalScopeX
-               defaultVal:50.0f];
+               defaultVal:50.0f
+              currentText:self.scopeXField.text];
 
-  // Scope Y field
-  float scopeYVal = [self.scopeYField.text floatValue];
-  BOOL scopeYChanged = fabsf(scopeYVal - self.originalScopeY) > epsilon;
-  self.scopeYField.layer.borderWidth = scopeYChanged ? 2.5 : 0.5;
-  self.scopeYField.layer.borderColor =
-      scopeYChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.scopeYField
                     saved:self.originalScopeY
-               defaultVal:50.0f];
+               defaultVal:50.0f
+              currentText:self.scopeYField.text];
 
-  // Scale field
-  float scaleVal = [self.scaleField.text floatValue];
-  BOOL scaleChanged = fabsf(scaleVal - self.originalScale) > epsilon;
-  self.scaleField.layer.borderWidth = scaleChanged ? 2.5 : 0.5;
-  self.scaleField.layer.borderColor =
-      scaleChanged ? yellowBorder.CGColor : normalBorder.CGColor;
   [self applyStyleToField:self.scaleField
                     saved:self.originalScale
-               defaultVal:20.0f];
+               defaultVal:20.0f
+              currentText:self.scaleField.text];
 }
 
 // Discard sensitivity changes
@@ -5310,7 +5863,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   NSDictionary *fortniteBinds = [[NSUserDefaults standardUserDefaults]
       dictionaryForKey:@"fortniteKeybinds"];
   if (fortniteBinds && fortniteBinds.count > 0) {
-    // Ensure values are JSON-compatible (convert NSNumbers to integers/strings)
+    // Ensure values are JSON-compatible (convert NSNumbers to
+    // integers/strings)
     NSMutableDictionary *cleanedFortniteBinds =
         [NSMutableDictionary dictionary];
     for (NSString *action in fortniteBinds) {
@@ -5326,37 +5880,20 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   }
 
   // Custom Keybinds/Remaps (from keybinds tab - advanced custom section)
-  // Try both: the global keyRemappings dictionary and UserDefaults
-  NSMutableDictionary *customRemaps = [NSMutableDictionary dictionary];
-
-  // Get from UserDefaults (these should already be string keys)
+  // Get reliably from UserDefaults (most accurate source)
   NSDictionary *savedRemaps =
       [[NSUserDefaults standardUserDefaults] dictionaryForKey:kKeyRemapKey];
   if (savedRemaps && savedRemaps.count > 0) {
-    // Convert to string keys to ensure JSON compatibility
-    for (id key in savedRemaps) {
-      NSString *stringKey =
-          [key isKindOfClass:[NSString class]] ? key : [key stringValue];
-      id value = savedRemaps[key];
-      NSString *stringValue =
-          [value isKindOfClass:[NSString class]] ? value : [value stringValue];
-      customRemaps[stringKey] = stringValue;
-    }
+    exportData[@"customRemaps"] = savedRemaps;
   }
 
-  // Also get from global keyRemappings in case UserDefaults isn't synced yet
-  if (keyRemappings && keyRemappings.count > 0) {
-    for (NSNumber *sourceKey in keyRemappings) {
-      NSNumber *targetKey = keyRemappings[sourceKey];
-      // Convert NSNumber to string for JSON compatibility
-      NSString *sourceKeyStr = [sourceKey stringValue];
-      NSString *targetKeyStr = [targetKey stringValue];
-      customRemaps[sourceKeyStr] = targetKeyStr;
-    }
-  }
-
-  if (customRemaps.count > 0) {
-    exportData[@"customRemaps"] = customRemaps;
+  // Mouse Fortnite Bindings — tracks which mouse codes are bound to Fortnite
+  // keybind actions (e.g. scroll up on Forward). Needed for correct UI
+  // display on import.
+  NSDictionary *mouseFortniteBindings = [[NSUserDefaults standardUserDefaults]
+      dictionaryForKey:@"mouseFortniteBindings"];
+  if (mouseFortniteBindings && mouseFortniteBindings.count > 0) {
+    exportData[@"mouseFortniteBindings"] = mouseFortniteBindings;
   }
 
   // Metadata
@@ -5435,16 +5972,6 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
   // Check if this is a settings file (JSON) - could be import or export
   if ([pathExtension isEqualToString:@"json"]) {
-    // Determine if this is export completion or import by checking if the file
-    // is in a temp/export location Export completion: URL will have a new
-    // location that's not in temp (user chose save location) Import: URL will
-    // be from user's file system (they're selecting an existing file)
-
-    // We can distinguish by checking the directory mode
-    // If it's from the export picker, the URL path won't be in
-    // NSTemporaryDirectory and won't be accessible for reading without security
-    // scoped access
-
     // Try to access - if we can start security scoped access, it's an import
     if ([url startAccessingSecurityScopedResource]) {
       NSError *error = nil;
@@ -5536,6 +6063,19 @@ static NSString *getKeyName(GCKeyCode keyCode) {
         loadKeyRemappings();
         [self refreshKeyRemapRows];
         [self updateApplyChangesButton];
+      }
+
+      // Apply Mouse Fortnite Bindings (UI metadata for mouse-bound Fortnite
+      // keybinds)
+      if (importData[@"mouseFortniteBindings"]) {
+        [[NSUserDefaults standardUserDefaults]
+            setObject:importData[@"mouseFortniteBindings"]
+               forKey:@"mouseFortniteBindings"];
+        // Reload so in-memory keyRemappings gets the mouse→key entries
+        loadKeyRemappings();
+        loadFortniteKeybinds();
+        [self refreshFortniteKeybinds];
+        [self refreshKeyRemapRows];
       }
 
       // Backward compatibility: handle old "keybinds" key (treat as custom

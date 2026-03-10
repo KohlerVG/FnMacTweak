@@ -50,11 +50,29 @@
     [self.view addSubview:titleBar];
 
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, w, 44)];
-    titleLabel.text = @"Welcome to FnMacTweak 2.0";
+    titleLabel.text = @"Welcome to FnMacTweak";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     titleLabel.textAlignment = NSTextAlignmentCenter;
     [titleBar addSubview:titleLabel];
+
+    // Version pill — matches P settings pane pill style
+    CGFloat pillW = 44.0;
+    CGFloat pillH = 16.0;
+    CGFloat pillX = w - 12.0 - pillW;
+    CGFloat pillY = (44.0 - pillH) / 2.0;
+    UIView *versionPill = [[UIView alloc] initWithFrame:CGRectMake(pillX, pillY, pillW, pillH)];
+    versionPill.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1.0];
+    versionPill.layer.cornerRadius = pillH / 2.0;
+    versionPill.layer.borderWidth = 0.5;
+    versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
+    UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
+    versionLabel.text = @"v3.0.0";
+    versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+    versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
+    versionLabel.textAlignment = NSTextAlignmentCenter;
+    [versionPill addSubview:versionLabel];
+    [titleBar addSubview:versionPill];
 
     y = 44 + 20;
 
@@ -130,131 +148,76 @@
     [self.view addSubview:hintBox];
     y += hintBoxH + 10;
 
-    // ── "Lock Cursor" + "Unlock Cursor" hint boxes — side by side ─
-    CGFloat boxSpacing = 8;
-    CGFloat halfBoxW   = (contentW - boxSpacing) / 2.0;
+    // ── "Lock / Unlock Cursor" — single full-width card ─────────
+    UIView *lockUnlockBox = [[UIView alloc] init];
+    lockUnlockBox.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
+    lockUnlockBox.layer.cornerRadius = 8;
+    lockUnlockBox.layer.borderWidth = 0.5;
+    lockUnlockBox.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.4].CGColor;
 
-    // Helper block to build each hint box
-    // Returns the box height so both boxes can be sized identically.
-    // ── Left box: Lock Cursor ─────────────────────────────────────
-    UIView *lockBox = [[UIView alloc] init];
-    lockBox.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
-    lockBox.layer.cornerRadius = 8;
-    lockBox.layer.borderWidth = 0.5;
-    lockBox.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.4].CGColor;
+    UILabel *lockUnlockTitle = [[UILabel alloc] init];
+    lockUnlockTitle.text = @"Lock / Unlock Cursor";
+    lockUnlockTitle.textColor = [UIColor whiteColor];
+    lockUnlockTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
 
-    UILabel *lockTitle = [[UILabel alloc] init];
-    lockTitle.text = @"Lock Cursor";
-    lockTitle.textColor = [UIColor whiteColor];
-    lockTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    UILabel *luBadge1 = [[UILabel alloc] init];
+    luBadge1.text = @"L⌥";
+    luBadge1.textColor = [UIColor whiteColor];
+    luBadge1.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    luBadge1.textAlignment = NSTextAlignmentCenter;
+    luBadge1.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
+    luBadge1.layer.cornerRadius = 5;
+    luBadge1.layer.borderWidth = 0.5;
+    luBadge1.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
+    luBadge1.layer.masksToBounds = YES;
 
-    UILabel *lockBadge1 = [[UILabel alloc] init];
-    lockBadge1.text = @"L⌥";
-    lockBadge1.textColor = [UIColor whiteColor];
-    lockBadge1.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    lockBadge1.textAlignment = NSTextAlignmentCenter;
-    lockBadge1.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    lockBadge1.layer.cornerRadius = 5;
-    lockBadge1.layer.borderWidth = 0.5;
-    lockBadge1.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    lockBadge1.layer.masksToBounds = YES;
+    UILabel *luPlus = [[UILabel alloc] init];
+    luPlus.text = @"+";
+    luPlus.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    luPlus.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    luPlus.textAlignment = NSTextAlignmentCenter;
 
-    UILabel *lockPlus = [[UILabel alloc] init];
-    lockPlus.text = @"+";
-    lockPlus.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
-    lockPlus.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    lockPlus.textAlignment = NSTextAlignmentCenter;
+    UILabel *luBadge2 = [[UILabel alloc] init];
+    luBadge2.text = @"Click";
+    luBadge2.textColor = [UIColor whiteColor];
+    luBadge2.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    luBadge2.textAlignment = NSTextAlignmentCenter;
+    luBadge2.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
+    luBadge2.layer.cornerRadius = 5;
+    luBadge2.layer.borderWidth = 0.5;
+    luBadge2.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
+    luBadge2.layer.masksToBounds = YES;
 
-    UILabel *lockBadge2 = [[UILabel alloc] init];
-    lockBadge2.text = @"Click";
-    lockBadge2.textColor = [UIColor whiteColor];
-    lockBadge2.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    lockBadge2.textAlignment = NSTextAlignmentCenter;
-    lockBadge2.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    lockBadge2.layer.cornerRadius = 5;
-    lockBadge2.layer.borderWidth = 0.5;
-    lockBadge2.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    lockBadge2.layer.masksToBounds = YES;
+    UILabel *lockUnlockBody = [[UILabel alloc] init];
+    lockUnlockBody.text = @"Hold Left Option and click to lock or unlock your mouse cursor to the game window.";
+    lockUnlockBody.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
+    lockUnlockBody.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    lockUnlockBody.numberOfLines = 0;
 
-    UILabel *lockBody = [[UILabel alloc] init];
-    lockBody.text = @"Locks your mouse cursor to the game window.";
-    lockBody.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
-    lockBody.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    lockBody.numberOfLines = 0;
+    CGFloat innerW  = contentW - 24;
+    CGFloat badgeH  = 28;
+    CGFloat badge1W = 34, plusW = 14, badge2W = 42;
 
-    // ── Right box: Unlock Cursor ──────────────────────────────────
-    UIView *unlockBox = [[UIView alloc] init];
-    unlockBox.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
-    unlockBox.layer.cornerRadius = 8;
-    unlockBox.layer.borderWidth = 0.5;
-    unlockBox.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.4].CGColor;
+    CGSize titleSz = [lockUnlockTitle sizeThatFits:CGSizeMake(innerW, 20)];
+    CGSize bodySz  = [lockUnlockBody  sizeThatFits:CGSizeMake(innerW, CGFLOAT_MAX)];
+    CGFloat boxH   = 12 + titleSz.height + 6 + badgeH + 6 + bodySz.height + 12;
 
-    UILabel *unlockTitle = [[UILabel alloc] init];
-    unlockTitle.text = @"Unlock Cursor";
-    unlockTitle.textColor = [UIColor whiteColor];
-    unlockTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    lockUnlockBox.frame   = CGRectMake(pad, y, contentW, boxH);
+    lockUnlockTitle.frame = CGRectMake(12, 12, innerW, titleSz.height);
+    CGFloat badgeTop      = 12 + titleSz.height + 6;
+    luBadge1.frame = CGRectMake(12,                           badgeTop, badge1W, badgeH);
+    luPlus.frame   = CGRectMake(12 + badge1W + 3,             badgeTop, plusW,   badgeH);
+    luBadge2.frame = CGRectMake(12 + badge1W + 3 + plusW + 3, badgeTop, badge2W, badgeH);
+    lockUnlockBody.frame  = CGRectMake(12, badgeTop + badgeH + 6, innerW, bodySz.height);
 
-    UILabel *unlockBadge = [[UILabel alloc] init];
-    unlockBadge.text = @"L⌥";
-    unlockBadge.textColor = [UIColor whiteColor];
-    unlockBadge.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    unlockBadge.textAlignment = NSTextAlignmentCenter;
-    unlockBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    unlockBadge.layer.cornerRadius = 5;
-    unlockBadge.layer.borderWidth = 0.5;
-    unlockBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    unlockBadge.layer.masksToBounds = YES;
+    [lockUnlockBox addSubview:lockUnlockTitle];
+    [lockUnlockBox addSubview:luBadge1];
+    [lockUnlockBox addSubview:luPlus];
+    [lockUnlockBox addSubview:luBadge2];
+    [lockUnlockBox addSubview:lockUnlockBody];
+    [self.view addSubview:lockUnlockBox];
 
-    UILabel *unlockBody = [[UILabel alloc] init];
-    unlockBody.text = @"Unlocks your mouse cursor from the game window.";
-    unlockBody.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
-    unlockBody.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    unlockBody.numberOfLines = 0;
-
-    // ── Size both boxes to the same height ───────────────────────
-    CGFloat innerHalf  = halfBoxW - 24;
-    CGFloat badgeH     = 28;
-    CGFloat badge1W    = 34, plusW = 14, badge2W = 42;
-
-    CGSize lockTitleSz   = [lockTitle   sizeThatFits:CGSizeMake(innerHalf, 20)];
-    CGSize lockBodySz    = [lockBody    sizeThatFits:CGSizeMake(innerHalf, CGFLOAT_MAX)];
-    CGSize unlockTitleSz = [unlockTitle sizeThatFits:CGSizeMake(innerHalf, 20)];
-    CGSize unlockBodySz  = [unlockBody  sizeThatFits:CGSizeMake(innerHalf, CGFLOAT_MAX)];
-
-    CGFloat lockH   = 12 + lockTitleSz.height   + 6 + badgeH + 6 + lockBodySz.height   + 12;
-    CGFloat unlockH = 12 + unlockTitleSz.height + 6 + badgeH + 6 + unlockBodySz.height + 12;
-    CGFloat pairH   = MAX(lockH, unlockH); // both boxes same height
-
-    // Lock box layout
-    lockBox.frame   = CGRectMake(pad, y, halfBoxW, pairH);
-    lockTitle.frame = CGRectMake(12, 12, innerHalf, lockTitleSz.height);
-    CGFloat lockBadgeTop = 12 + lockTitleSz.height + 6;
-    lockBadge1.frame = CGRectMake(12,                             lockBadgeTop, badge1W, badgeH);
-    lockPlus.frame   = CGRectMake(12 + badge1W + 3,               lockBadgeTop, plusW,   badgeH);
-    lockBadge2.frame = CGRectMake(12 + badge1W + 3 + plusW + 3,   lockBadgeTop, badge2W, badgeH);
-    lockBody.frame   = CGRectMake(12, lockBadgeTop + badgeH + 6,  innerHalf, lockBodySz.height);
-
-    [lockBox addSubview:lockTitle];
-    [lockBox addSubview:lockBadge1];
-    [lockBox addSubview:lockPlus];
-    [lockBox addSubview:lockBadge2];
-    [lockBox addSubview:lockBody];
-    [self.view addSubview:lockBox];
-
-    // Unlock box layout
-    CGFloat unlockX = pad + halfBoxW + boxSpacing;
-    unlockBox.frame   = CGRectMake(unlockX, y, halfBoxW, pairH);
-    unlockTitle.frame = CGRectMake(12, 12, innerHalf, unlockTitleSz.height);
-    CGFloat unlockBadgeTop = 12 + unlockTitleSz.height + 6;
-    unlockBadge.frame  = CGRectMake(12, unlockBadgeTop, badge1W, badgeH);
-    unlockBody.frame   = CGRectMake(12, unlockBadgeTop + badgeH + 6, innerHalf, unlockBodySz.height);
-
-    [unlockBox addSubview:unlockTitle];
-    [unlockBox addSubview:unlockBadge];
-    [unlockBox addSubview:unlockBody];
-    [self.view addSubview:unlockBox];
-
-    y += pairH + 22;
+    y += boxH + 22;
 
     // ── Buttons ──────────────────────────────────────────────────
     CGFloat btnH = 36;
@@ -341,7 +304,7 @@
 }
 
 - (void)dontShowAgainTapped {
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.2";
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.4";
     [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:kWelcomeSeenVersion];
     // Store which version was suppressed. When the version bumps,
     // this won't match and the popup will reshow once for the new version.
@@ -377,7 +340,7 @@ void showWelcomePopupIfNeeded(void) {
     // Use lastSeenVersion — written by %ctor on every install/update from the control
     // file version. This is reliable even for users upgrading from 2.0.0 where
     // fnmactweak.version was never written correctly due to the wrong bundle ID in postinst.
-    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.2";
+    NSString *currentVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"] ?: @"2.0.4";
 
     // "Don't Show Again" suppression — only blocks if the suppressed version matches
     // the current version. A version bump clears this automatically.

@@ -3,6 +3,21 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.1] — April 2026
+
+### 🐔 Added
+- **Winner Winner Chicken Dinner easter egg** — Opening the P settings pane triggers an animated GIF card that bounces in, looks around suspiciously, then iris-closes out. Three GIFs cycle in order on each open.
+- **Close animation** — Pressing P or clicking ✕ swaps in a destroy GIF that plays through exactly one full cycle before the pane closes. Frame-accurate playback via `CADisplayLink` with real per-frame GIF delays from metadata — stops on the last frame, never flashes back to frame 1.
+- All 4 GIFs preloaded at launch in the background so the first open is instant.
+- **Version pill in Welcome popup** — The Welcome popup title bar now shows a matching `v3.0.1` pill, consistent with the P settings pane.
+
+### 🐛 Fixed
+- GIF frame timing now uses real per-frame metadata delays instead of hardcoded 0.05s per frame.
+- Eliminated orphaned `CADisplayLink` after chicken animation completes.
+- Removed observer leak on repeated open/close cycles.
+
+---
+
 ## [3.0.0] — March 2026
 
 ### ✨ Added

@@ -56,7 +56,7 @@
     titleLabel.textAlignment = NSTextAlignmentCenter;
     [titleBar addSubview:titleLabel];
 
-    // Version pill — matches P settings pane pill style
+    // Version pill — same style as P settings pane pill
     CGFloat pillW = 44.0;
     CGFloat pillH = 16.0;
     CGFloat pillX = w - 12.0 - pillW;
@@ -67,7 +67,7 @@
     versionPill.layer.borderWidth = 0.5;
     versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
     UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
-    versionLabel.text = @"v3.0.0";
+    versionLabel.text = @"v3.0.1";
     versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
     versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     versionLabel.textAlignment = NSTextAlignmentCenter;

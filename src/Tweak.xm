@@ -11,6 +11,8 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <math.h>
+#import <ImageIO/ImageIO.h>
+#import <QuartzCore/QuartzCore.h>
 
 // Pre-calculated sensitivity multipliers (computed once at startup via recalculateSensitivities())
 // Formula: (BASE_XY_SENSITIVITY / 100) × (Look% / 100) × MACOS_TO_PC_SCALE
@@ -273,6 +275,11 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 }
 @end
 
+static void preloadChickenGIF(void);
+static void showChickenDinner(void);
+static void dismissChickenDinner(void);
+static void showDestroyGIF(void);
+
 %ctor {
     // Fishhook for device spoofing
     struct rebinding rebindings[] = {
@@ -281,7 +288,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     };
     rebind_symbols(rebindings, 2);
 
-    NSString* currentVersion = @"3.0.0";
+    NSString* currentVersion = @"3.0.1";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {
@@ -326,6 +333,12 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     loadKeyRemappings();
     loadFortniteKeybinds();
 
+    preloadChickenGIF(); // 🐔 fetch in background so first open is instant
+    [[NSNotificationCenter defaultCenter]   // 🐔 destroy GIF on close
+        addObserverForName:@"FnMacTweakDestroyChicken"
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *_) { showDestroyGIF(); }];
     showWelcomePopupIfNeeded();
 
     isBorderlessModeEnabled = [tweakDefaults() boolForKey:kBorderlessWindowKey];
@@ -455,6 +468,486 @@ static inline CGFloat PixelAlign(CGFloat value) {
     return round(value * scale) / scale;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────
+// WINNER WINNER CHICKEN DINNER 🐔
+// ─────────────────────────────────────────────────────────────────────
+
+// Three open GIFs cycling in order, plus one close GIF
+static NSArray<NSString *> *_openGIFURLs(void) {
+    return @[
+        @"https://github.com/KohlerVG/FnMacTweak/releases/download/v3-assets/Winner.Winner.Win.GIF.by.GIPHY.Studios.2021.gif",
+        @"https://github.com/KohlerVG/FnMacTweak/releases/download/v3-assets/hate.you.shut.up.GIF.by.happydog.gif",
+        @"https://github.com/KohlerVG/FnMacTweak/releases/download/v3-assets/Angry.Chicken.GIF.by.happydog.gif",
+    ];
+}
+static NSString *_closeGIFURL(void) {
+    return @"https://github.com/KohlerVG/FnMacTweak/releases/download/v3-assets/chicken.destroy.GIF.by.happydog.gif";
+}
+
+static NSMutableDictionary<NSString *, NSData *> *_gifCache = nil;
+static NSInteger _openGIFIndex = 0;
+static UIWindow *_chickenWindow = nil;
+static id _chickenObserver = nil;
+static UIImageView *_chickenIV = nil;
+static UIView *_chickenCard = nil;
+BOOL _destroyPending = NO;
+static NSInteger _chickenGeneration = 0; // bump to cancel all in-flight blocks
+static CADisplayLink *_chickenSyncLink = nil; // frame-sync display link, invalidated on destroy
+
+// Fetch all GIFs in background at startup
+static void preloadChickenGIF() {
+    if (!_gifCache) _gifCache = [NSMutableDictionary dictionary];
+    NSMutableArray *allURLs = [NSMutableArray arrayWithArray:_openGIFURLs()];
+    [allURLs addObject:_closeGIFURL()];
+    for (NSString *url in allURLs) {
+        if (_gifCache[url]) continue;
+        NSString *urlCopy = url;
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:urlCopy]];
+            if (data) {
+                dispatch_async(dispatch_get_main_queue(), ^{ _gifCache[urlCopy] = data; });
+            }
+        });
+    }
+}
+
+// Build UIImage animated from cached NSData using real per-frame GIF delays
+static UIImage *_buildAnimatedImage(NSData *gifData) {
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)gifData, NULL);
+    if (!source) return nil;
+    size_t count = CGImageSourceGetCount(source);
+    NSMutableArray<UIImage *> *frames = [NSMutableArray arrayWithCapacity:count];
+    NSTimeInterval totalDuration = 0;
+    for (size_t i = 0; i < count; i++) {
+        CGImageRef cgImg = CGImageSourceCreateImageAtIndex(source, i, NULL);
+        if (!cgImg) continue;
+        [frames addObject:[UIImage imageWithCGImage:cgImg]];
+        CGImageRelease(cgImg);
+        // Read actual per-frame delay from GIF metadata
+        NSTimeInterval delay = 0.1;
+        NSDictionary *props = (__bridge_transfer NSDictionary *)
+            CGImageSourceCopyPropertiesAtIndex(source, i, NULL);
+        NSDictionary *gifProps = props[(NSString *)kCGImagePropertyGIFDictionary];
+        if (gifProps) {
+            NSNumber *d = gifProps[(NSString *)kCGImagePropertyGIFUnclampedDelayTime];
+            if (!d || d.doubleValue < 0.01)
+                d = gifProps[(NSString *)kCGImagePropertyGIFDelayTime];
+            if (d && d.doubleValue >= 0.01) delay = d.doubleValue;
+        }
+        totalDuration += delay;
+    }
+    CFRelease(source);
+    if (!frames.count) return nil;
+    return [UIImage animatedImageWithImages:frames duration:totalDuration];
+}
+
+static void showChickenDinner() {
+    UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+    UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
+    if (!keyWindow) return;
+
+    // Pick next open GIF in rotation
+    NSArray *urls = _openGIFURLs();
+    NSString *url = urls[_openGIFIndex % urls.count];
+    _openGIFIndex++;
+
+    if (!_gifCache || !_gifCache[url]) {
+        // Not cached yet — fetch and skip this open
+        preloadChickenGIF();
+        return;
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSData *gifData = _gifCache[url];
+        if (!gifData) return;
+        UIImage *animatedImage = _buildAnimatedImage(gifData);
+        if (!animatedImage) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+
+            // Create a dedicated UIWindow sitting above popupWindow so the card
+            // is never clipped by the root view's masksToBounds and always on top.
+            // We mirror popupWindow's frame so the card coordinates match 1:1 and
+            // the window moves with the pane when dragged.
+            UIWindowScene *wScene = popupWindow.windowScene;
+            _chickenWindow = [[UIWindow alloc] initWithWindowScene:wScene];
+            UIWindow *chickenWindow = _chickenWindow;
+            chickenWindow.frame = popupWindow.frame;
+            chickenWindow.windowLevel = popupWindow.windowLevel + 1;
+            chickenWindow.backgroundColor = [UIColor clearColor];
+            chickenWindow.userInteractionEnabled = NO;
+            chickenWindow.hidden = NO;
+
+            // Dismiss instantly if popup is closed mid-animation
+            // Remove any stale observer first
+            if (_chickenObserver) {
+                [[NSNotificationCenter defaultCenter] removeObserver:_chickenObserver];
+                _chickenObserver = nil;
+            }
+            _chickenObserver = [[NSNotificationCenter defaultCenter]
+                addObserverForName:@"FnMacTweakDismissChicken"
+                            object:nil
+                             queue:[NSOperationQueue mainQueue]
+                        usingBlock:^(NSNotification *_) {
+                // Stop open animation in place — showDestroyGIF will take over
+                if (_chickenWindow) [_chickenWindow.layer removeAllAnimations];
+                if (_chickenObserver) {
+                    [[NSNotificationCenter defaultCenter] removeObserver:_chickenObserver];
+                    _chickenObserver = nil;
+                }
+            }];
+
+            UIViewController *dummyVC = [UIViewController new];
+            dummyVC.view.backgroundColor = [UIColor clearColor];
+            chickenWindow.rootViewController = dummyVC;
+
+            CGFloat paneW = popupWindow.bounds.size.width;
+            CGFloat paneH = popupWindow.bounds.size.height;
+
+            UIView *overlay = [[UIView alloc] initWithFrame:CGRectMake(0, 0, paneW, paneH)];
+            overlay.backgroundColor = [UIColor clearColor];
+            overlay.userInteractionEnabled = NO;
+
+            CGFloat margin = 16.0;
+            CGFloat cardW = paneW - margin * 2;
+            CGFloat cardX = margin;
+            CGFloat cardY = floor((paneH - cardW) / 2.0);
+            UIView *card = [[UIView alloc] initWithFrame:CGRectMake(cardX, cardY, cardW, cardW)];
+            card.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+            card.layer.cornerRadius = 12;
+            card.layer.borderWidth = 0.5;
+            card.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.8].CGColor;
+            card.layer.masksToBounds = YES;
+
+            CGFloat padding = 12;
+            UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(
+                padding, padding, cardW - padding * 2, cardW - padding * 2)];
+            iv.image = animatedImage;
+            iv.contentMode = UIViewContentModeScaleAspectFill;
+            iv.clipsToBounds = YES;
+            iv.layer.cornerRadius = 8;
+            iv.layer.masksToBounds = YES;
+            _chickenIV = iv;
+            _chickenCard = card;
+            [card addSubview:iv];
+            [overlay addSubview:card];
+            [dummyVC.view addSubview:overlay];
+
+            // Keep chickenWindow frame in sync while it's visible by polling
+            // popupWindow.frame on every display frame using a CADisplayLink.
+            __block UIWindow *_cw = chickenWindow;
+            __block UIWindow *_pw = popupWindow;
+            CADisplayLink *__block link = [CADisplayLink
+                displayLinkWithTarget:[NSBlockOperation blockOperationWithBlock:^{
+                    if (_cw && _pw) _cw.frame = _pw.frame;
+                }]
+                selector:@selector(main)];
+            [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+            _chickenSyncLink = link;
+            __block CADisplayLink *syncLink = link;
+
+            // Capture generation so all completion blocks can bail if cancelled
+            NSInteger myGen = _chickenGeneration;
+
+            // Bounce in from scale 0
+            overlay.alpha = 0;
+            card.transform = CGAffineTransformMakeScale(0.1, 0.1);
+            [UIView animateWithDuration:0.5
+                                  delay:0
+                 usingSpringWithDamping:0.5
+                  initialSpringVelocity:0.8
+                                options:UIViewAnimationOptionCurveEaseOut
+                             animations:^{
+                overlay.alpha = 1;
+                card.transform = CGAffineTransformIdentity;
+            } completion:^(BOOL finished) {
+                if (_chickenGeneration != myGen) return;
+                // Phase 1 — hold 1.8s then shrink to 50%
+                [UIView animateWithDuration:0.7
+                                      delay:1.8
+                                    options:UIViewAnimationOptionCurveEaseIn
+                                 animations:^{
+                    card.transform = CGAffineTransformMakeScale(0.5, 0.5);
+                } completion:^(BOOL s1) {
+                    if (_chickenGeneration != myGen) return;
+
+                    // Phase 2 — look around randomly (3-4 spots)
+                    int totalSearches = 3 + arc4random_uniform(2);
+                    __block int searchCount = 0;
+                    __block CGFloat lastTx = 0, lastTy = 0;
+
+                    // Recursive block for chained async animations
+                    __block void (^doSearch)(void);
+                    __weak __block void (^weakDoSearch)(void);
+                    weakDoSearch = nil; // set after assignment below
+                    doSearch = [^{
+                    __strong void (^strongDoSearch)(void) = weakDoSearch;
+                        if (_chickenGeneration != myGen) return;
+                        if (searchCount >= totalSearches) {
+                            // Settle back to center with spring
+                            [UIView animateWithDuration:0.5
+                                                  delay:0
+                                 usingSpringWithDamping:0.5
+                                  initialSpringVelocity:0.3
+                                                options:UIViewAnimationOptionCurveEaseOut
+                                             animations:^{
+                                card.transform = CGAffineTransformMakeScale(0.5, 0.5);
+                            } completion:^(BOOL settled) {
+                                // Phase 3 — iris close using CAAnimationGroup so
+                                // both scale and cornerRadius animate reliably together
+                                card.layer.cornerRadius = 12;
+                                card.layer.masksToBounds = YES;
+
+                                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                    (int64_t)(0.45 * NSEC_PER_SEC)),
+                                    dispatch_get_main_queue(), ^{
+                                    if (_chickenGeneration != myGen) return;
+
+                                    CGFloat halfW = card.bounds.size.width / 2.0;
+                                    CGFloat halfIv = iv.bounds.size.width / 2.0;
+                                    NSTimeInterval dur = 1.5;
+
+                                    CABasicAnimation *scaleAnim = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+                                    scaleAnim.fromValue = @(0.5);
+                                    scaleAnim.toValue   = @(0.0);
+
+                                    CABasicAnimation *radiusAnim = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];
+                                    radiusAnim.fromValue = @(12.0);
+                                    radiusAnim.toValue   = @(halfW);
+
+                                    CAAnimationGroup *group = [CAAnimationGroup animation];
+                                    group.animations  = @[scaleAnim, radiusAnim];
+                                    group.duration    = dur;
+                                    group.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+                                    group.fillMode    = kCAFillModeForwards;
+                                    group.removedOnCompletion = NO;
+
+                                    [card.layer addAnimation:group forKey:@"irisClose"];
+
+                                    // iv gets same cornerRadius animation in sync
+                                    CABasicAnimation *ivRadiusAnim = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];
+                                    ivRadiusAnim.fromValue = @(8.0);
+                                    ivRadiusAnim.toValue   = @(halfIv);
+                                    ivRadiusAnim.duration  = dur;
+                                    ivRadiusAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
+                                    ivRadiusAnim.fillMode  = kCAFillModeForwards;
+                                    ivRadiusAnim.removedOnCompletion = NO;
+
+                                    [iv.layer addAnimation:ivRadiusAnim forKey:@"irisCloseIv"];
+
+                                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                        (int64_t)((dur + 0.05) * NSEC_PER_SEC)),
+                                        dispatch_get_main_queue(), ^{
+                                        if (_chickenGeneration != myGen) return;
+                                        [syncLink invalidate];
+                                        _chickenSyncLink = nil;
+                                        if (_chickenObserver) {
+                                            [[NSNotificationCenter defaultCenter] removeObserver:_chickenObserver];
+                                            _chickenObserver = nil;
+                                        }
+                                        // Hide window but keep hierarchy intact so
+                                        // showDestroyGIF can reuse it if user closes after
+                                        chickenWindow.hidden = YES;
+                                        overlay.hidden = YES;
+                                    });
+                                });
+                            }];
+                            return;
+                        }
+                        searchCount++;
+
+                        // Random position within pane — 35 to 90pt from center
+                        CGFloat angle = ((CGFloat)arc4random_uniform(3600)) / 3600.0 * M_PI * 2.0;
+                        CGFloat dist  = 35.0 + ((CGFloat)arc4random_uniform(5500)) / 100.0;
+                        CGFloat tx = roundf(cosf(angle) * dist);
+                        CGFloat ty = roundf(sinf(angle) * dist);
+
+                        // Distance-based duration so far moves feel proportional
+                        CGFloat dx = tx - lastTx, dy = ty - lastTy;
+                        CGFloat moveDist = sqrtf(dx*dx + dy*dy);
+                        NSTimeInterval moveDur = (165.0 + moveDist * 4.1) / 1000.0;
+                        NSTimeInterval pauseDur = (90.0 + ((CGFloat)arc4random_uniform(10500)) / 100.0) / 1000.0;
+                        lastTx = tx; lastTy = ty;
+
+                        [UIView animateWithDuration:moveDur
+                                              delay:0
+                                            options:UIViewAnimationOptionCurveEaseInOut
+                                         animations:^{
+                            card.transform = CGAffineTransformConcat(
+                                CGAffineTransformMakeScale(0.5, 0.5),
+                                CGAffineTransformMakeTranslation(tx, ty));
+                        } completion:^(BOOL moved) {
+                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                (int64_t)(pauseDur * NSEC_PER_SEC)),
+                                dispatch_get_main_queue(), strongDoSearch);
+                        }];
+                    } copy];
+                    weakDoSearch = doSearch;
+
+                    doSearch();
+                }];
+            }];
+        });
+    });
+}
+
+static void __attribute__((used)) dismissChickenDinner() {
+    if (_chickenObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:_chickenObserver];
+        _chickenObserver = nil;
+    }
+    if (_chickenWindow) {
+        UIWindow *w = _chickenWindow;
+        _chickenWindow = nil;
+        _chickenIV = nil;
+        _chickenCard = nil;
+        _destroyPending = NO;
+        _chickenGeneration++;
+        if (_chickenSyncLink) { [_chickenSyncLink invalidate]; _chickenSyncLink = nil; }
+        [w.layer removeAllAnimations];
+        w.hidden = YES;
+    }
+}
+
+// Show the destroy GIF in-place inside the existing chickenWindow.
+// Swaps the iv image instantly, waits one full GIF cycle,
+// then hides both the popup pane and the chicken window together.
+static void showDestroyGIF() {
+    // Guard: only one destroy sequence at a time
+    if (_destroyPending) return;
+    if (!_gifCache) return;
+    NSData *gifData = _gifCache[_closeGIFURL()];
+    if (!gifData) return;
+    if (!_chickenWindow || !_chickenIV || !_chickenCard) return;
+
+    UIImage *animatedImage = _buildAnimatedImage(gifData);
+    if (!animatedImage) return;
+
+    _destroyPending = YES;
+    _chickenGeneration++; // cancels all in-flight open animation blocks instantly
+    if (_chickenSyncLink) { [_chickenSyncLink invalidate]; _chickenSyncLink = nil; }
+
+    // ── Stop every in-flight animation on the whole chicken window ──
+    [_chickenWindow.layer removeAllAnimations];
+    [_chickenCard.layer removeAllAnimations];
+    [_chickenIV.layer removeAllAnimations];
+    for (UIView *sub in _chickenCard.subviews) [sub.layer removeAllAnimations];
+
+    // ── Reset card to initial state (full size, centered, 12pt radius) ──
+    _chickenCard.transform   = CGAffineTransformIdentity;
+    _chickenCard.alpha        = 1.0;
+    _chickenCard.layer.cornerRadius = 12;
+
+    // ── Reset iv to initial state (8pt radius, full frame, AspectFill) ──
+    _chickenIV.layer.cornerRadius = 8;
+    _chickenIV.layer.transform    = CATransform3DIdentity;
+    _chickenIV.alpha               = 1.0;
+
+    // ── Make sure the overlay containing the card is fully visible ──
+    // After iris close, overlay was removed from superview — re-add it
+    UIView *overlay = _chickenCard.superview;
+    UIViewController *rootVC = _chickenWindow.rootViewController;
+    if (overlay && overlay.superview == nil && rootVC) {
+        [rootVC.view addSubview:overlay];
+    }
+    if (overlay) { overlay.alpha = 1.0; overlay.hidden = NO; overlay.transform = CGAffineTransformIdentity; }
+
+    // Reset CALayer presentation state (fillMode=forwards may have frozen it at scale 0)
+    _chickenCard.layer.transform = CATransform3DIdentity;
+    _chickenIV.layer.transform   = CATransform3DIdentity;
+
+    // Unhide window in case open animation already finished and hid it
+    _chickenWindow.layer.opacity = 1.0;
+    _chickenWindow.hidden = NO;
+
+    // ── Drive frames manually via CADisplayLink so we stop EXACTLY on the last frame ──
+    // Never use UIImageView animation for destroy — it loops and we can't stop it precisely.
+    NSArray<UIImage *> *frames = animatedImage.images;
+    NSUInteger frameCount = frames.count;
+    if (!frameCount) return;
+
+    // Build per-frame durations by re-reading GIF metadata
+    CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)gifData, NULL);
+    NSMutableArray<NSNumber *> *delays = [NSMutableArray arrayWithCapacity:frameCount];
+    for (NSUInteger i = 0; i < frameCount; i++) {
+        NSTimeInterval d = 0.1;
+        NSDictionary *props = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(src, i, NULL);
+        NSDictionary *gp = props[(NSString *)kCGImagePropertyGIFDictionary];
+        if (gp) {
+            NSNumber *n = gp[(NSString *)kCGImagePropertyGIFUnclampedDelayTime];
+            if (!n || n.doubleValue < 0.01) n = gp[(NSString *)kCGImagePropertyGIFDelayTime];
+            if (n && n.doubleValue >= 0.01) d = n.doubleValue;
+        }
+        [delays addObject:@(d)];
+    }
+    if (src) CFRelease(src);
+
+    // Show first frame immediately (no animated image — we drive it)
+    _chickenIV.image = frames[0];
+
+    __block NSUInteger frameIdx = 0;
+    __block NSTimeInterval frameBudget = [delays[0] doubleValue];
+    __block CFTimeInterval lastTime = 0;
+    UIImageView *iv = _chickenIV;
+    UIWindow *cw = _chickenWindow;
+
+    CADisplayLink *dl = [CADisplayLink
+        displayLinkWithTarget:[NSBlockOperation blockOperationWithBlock:^{
+            CFTimeInterval now = CACurrentMediaTime();
+            if (lastTime == 0) { lastTime = now; return; }
+            frameBudget -= (now - lastTime);
+            lastTime = now;
+
+            if (frameBudget <= 0) {
+                frameIdx++;
+                if (frameIdx >= frameCount) {
+                    // Landed on last frame — freeze and close
+                    iv.image = frames[frameCount - 1];
+                    // Invalidate on next runloop tick so we're not inside the callback
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        // dl captured below
+                    });
+                    return; // dl will be invalidated by the outer block below
+                }
+                iv.image = frames[frameIdx];
+                frameBudget = [delays[frameIdx] doubleValue];
+            }
+        }]
+        selector:@selector(main)];
+    [dl addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+
+    // Watch for frameIdx reaching the end using a polling dispatch
+    // (CADisplayLink block can't invalidate itself directly)
+    __block CADisplayLink *destroyLink = dl;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        void (^__block poll)(void);
+        __weak __block void (^weakPoll)(void);
+        poll = [^{
+            __strong void (^strongPoll)(void) = weakPoll;
+            if (frameIdx >= frameCount) {
+                [destroyLink invalidate];
+                destroyLink = nil;
+                iv.image = frames[frameCount - 1]; // last frame, no loop
+                cw.hidden = YES;
+                isPopupVisible = NO;
+                popupWindow.hidden = YES;
+                updateRedDotVisibility();
+                if (_chickenWindow == cw) {
+                    _chickenWindow = nil;
+                    _chickenIV     = nil;
+                    _chickenCard   = nil;
+                }
+                _destroyPending = NO;
+                return;
+            }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.016 * NSEC_PER_SEC)),
+                dispatch_get_main_queue(), strongPoll);
+        } copy];
+        weakPoll = poll;
+        poll();
+    });
+}
+
+
 static void createPopup() {
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication] connectedScenes].anyObject;
     popupWindow = [[UIWindow alloc] initWithWindowScene:scene];
@@ -476,6 +969,7 @@ void showPopupOnQuickStartTab(void) {
     if (!popupWindow) createPopup();
     isPopupVisible = YES;
     popupWindow.hidden = NO;
+    showChickenDinner(); // 🐔
     popupViewController *vc = (popupViewController *)popupWindow.rootViewController;
     if ([vc respondsToSelector:@selector(switchToQuickStartTab)]) {
         [vc switchToQuickStartTab];
@@ -1070,19 +1564,32 @@ static void installMouseButtonHandlers(GCMouseInput *mi) {
             // to check for unsaved changes
             if (isPopupVisible) {
                 // Get the popup view controller and call its close method
-                popupViewController* viewController = (popupViewController*)popupWindow.rootViewController;
-                if (viewController && [viewController respondsToSelector:@selector(closeButtonTapped)]) {
-                    [viewController performSelector:@selector(closeButtonTapped)];
+                // Stop the open animation in place, then show destroy GIF in same window
+                if (_chickenObserver) {
+                    [[NSNotificationCenter defaultCenter] removeObserver:_chickenObserver];
+                    _chickenObserver = nil;
+                }
+                if (_chickenWindow) [_chickenWindow.layer removeAllAnimations];
+
+                if (_chickenWindow && _chickenIV) {
+                    // Destroy GIF will play in the existing window and hide popup when done
+                    showDestroyGIF();
                 } else {
-                    // Fallback: close directly if view controller not available
-                    isPopupVisible = NO;
-                    popupWindow.hidden = YES;
-                    updateRedDotVisibility();
+                    // No chicken window — close normally
+                    popupViewController* viewController = (popupViewController*)popupWindow.rootViewController;
+                    if (viewController && [viewController respondsToSelector:@selector(closeButtonTapped)]) {
+                        [viewController performSelector:@selector(closeButtonTapped)];
+                    } else {
+                        isPopupVisible = NO;
+                        popupWindow.hidden = YES;
+                        updateRedDotVisibility();
+                    }
                 }
             } else {
                 // Opening popup - just show it
                 isPopupVisible = YES;
                 popupWindow.hidden = NO;
+                showChickenDinner(); // 🐔
             }
             
             isMouseLocked = false;

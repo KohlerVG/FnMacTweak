@@ -1795,7 +1795,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   versionPill.layer.borderWidth = 0.5;
   versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
   UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
-  versionLabel.text = @"v3.0.0";
+  versionLabel.text = @"v3.0.1";
   versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
   versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
   versionLabel.textAlignment = NSTextAlignmentCenter;
@@ -5136,6 +5136,8 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 // Handle dragging the window
 - (void)closeButtonTapped {
   [self.view endEditing:YES];
+  [[NSNotificationCenter defaultCenter] postNotificationName:@"FnMacTweakDismissChicken" object:nil];
+  [[NSNotificationCenter defaultCenter] postNotificationName:@"FnMacTweakDestroyChicken" object:nil];
   // Check if there are unsaved changes (keybinds or sensitivity)
   BOOL hasKeybindChanges = self.stagedKeybinds.count > 0;
   BOOL hasSensitivityChanges = [self hasSensitivityChanges];
@@ -5216,15 +5218,16 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 
     [self presentViewController:alert animated:YES completion:nil];
   } else {
-    // No unsaved changes, close normally
+    // No unsaved changes
+    [self pauseQuickStartVideos];
+    // Destroy GIF owns the hide if it's running; otherwise close directly
     extern BOOL isPopupVisible;
     extern UIWindow *popupWindow;
-    isPopupVisible = NO;
-    popupWindow.hidden = YES;
-    [self pauseQuickStartVideos];
-
-    // Update red dot visibility when popup is closed
-    updateRedDotVisibility();
+    if (!_destroyPending) {
+        isPopupVisible = NO;
+        popupWindow.hidden = YES;
+        updateRedDotVisibility();
+    }
   }
 }
 

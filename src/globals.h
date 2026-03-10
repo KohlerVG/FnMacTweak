@@ -164,3 +164,5 @@ static inline GCKeyCode getRemappedKey(GCKeyCode keyCode, BOOL *isRemapped) {
     return keyCode;
   }
 }
+
+extern BOOL _destroyPending;

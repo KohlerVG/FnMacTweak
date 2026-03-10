@@ -10,7 +10,7 @@ FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on A
 
 | Feature | Description |
 |---|---|
-| 🖱️ **FPS Cursor Lock** | Lock with **L Option + Left Click** for perfect FPS aiming. Unlock with **L Option** to navigate the UI. |
+| 🖱️ **FPS Cursor Lock** | Lock/Unlock with **L⌥ + Left Click** for perfect FPS aiming. |
 | ⚡ **120 FPS** | Play at up to 120 FPS on supported ProMotion screens. |
 | 🎨 **High Graphics** | Unlock High and Epic graphics settings usually hidden on mobile. |
 | 🎯 **Zero-Lag Input** | Perfectly smooth mouse movement and instant responsiveness. |
@@ -44,14 +44,17 @@ Requires Theos to be installed and `$THEOS` set in your environment.
 
 ## 🖱️ Mouse Lock
 
-Mouse locking uses two **separate, deliberate gestures** to prevent accidental lock/unlock mid-game:
+Mouse locking uses a single deliberate gesture for both lock and unlock:
 
 | Action | Gesture |
 |---|---|
-| 🔒 **Lock** | Hold **Left Option** → **Left Click** |
-| 🔓 **Unlock** | Tap **Left Option** (alone) |
+| 🔒 **Lock** | Hold **L⌥** → **Left Click** |
+| 🔓 **Unlock** | Hold **L⌥** → **Left Click** |
 
-The lock click is fully suppressed — it will **not** fire a shot, place a build, or interact with the UI. The `P` key always force-unlocks the mouse when opening the settings panel.
+- Only the **first** left click per Option hold counts — extra clicks while Option is held are ignored.
+- The lock click is fully suppressed — it will **not** fire a shot, place a build, or interact with the UI.
+- Any active UI touches are cleared the moment Left Option is pressed, preventing stuck inputs.
+- The `P` key always force-unlocks the mouse when opening the settings panel.
 
 ---
 
@@ -70,9 +73,7 @@ effective = (Base ÷ 100) × (Look% ÷ 100) × Scale
 | `SCOPE_SENSITIVITY_X/Y` | 50% | ADS horizontal / vertical |
 | `MACOS_TO_PC_SCALE` | 20.0 | Converts macOS mouse delta to PC units |
 
-Sensitivities are **pre-calculated once at startup** and cached — no per-frame math overhead. Sub-pixel movements are accumulated and never lost. 
-
-The build system uses the **`-O3` optimization level**, and the view hierarchy traversal for UITouch events is optimized with a fast O(1) cache (~1ns overhead).
+Sensitivities are **pre-calculated once at startup** and cached — no per-frame math overhead. Sub-pixel movements are accumulated and never lost.
 
 Press `P` in-game → **Sensitivity** tab to adjust these live.
 
@@ -82,8 +83,8 @@ Press `P` in-game → **Sensitivity** tab to adjust these live.
 
 Two independent remapping layers stack on top of each other:
 
-1. **Fortnite Keybinds** — Remaps game actions (Forward, Reload, Build…) to your preferred keys. These match what you'd set in Fortnite's own keybind menu.
-2. **Advanced Custom Remaps** — Raw key-to-key overrides that take priority over everything else. Useful for fixing edge cases or overriding Fortnite defaults.
+1. **Fortnite Keybinds** — Remaps game actions (Forward, Reload, Build…) to your preferred keys.
+2. **Advanced Custom Remaps** — Raw key-to-key overrides that take priority over everything else.
 
 Both layers use **direct array lookups** (indexed by `GCKeyCode`) for ~2ns overhead per keypress — effectively zero latency.
 
@@ -97,7 +98,7 @@ Build Mode lets you use mouse clicks to build and edit just like on PC:
 
 - **Right-Click (Hold)**: Aim down sights normally.
 - **Left-Click**: Places builds or selects edits wherever the **Red Dot Crosshair** is placed.
-- **Draggable Crosshair**: Open the `P` settings panel while Build Mode is on — the red dot appears immediately on screen. Click and drag it to perfectly align it with your crosshair. Its position is saved automatically.
+- **Draggable Crosshair**: Open the `P` settings panel while Build Mode is on — the red dot appears on screen. Drag it to align with your crosshair. Position is saved automatically.
 
 Toggle Build Mode in the **P** menu → **Build Mode** tab.
 
@@ -120,7 +121,6 @@ FnMacTweak/
 │   └── fishhook.{h,c}             # Facebook's fishhook — used for sysctl device spoofing
 ├── Makefile                       # Theos build config
 ├── control                        # Debian package metadata (single source of truth for version)
-├── postinst                       # Runs after every install — writes version to NSUserDefaults
 └── FnMacTweak.plist               # Theos injection filter (targets Fortnite bundle)
 ```
 
@@ -132,8 +132,8 @@ Contributions are welcome! Here's how to get oriented:
 
 - **`Tweak.xm`** is where all the Theos `%hook` patches live. If you're changing how input is intercepted or adding a new game hook, start here.
 - **`globals.h/.m`** holds all shared state. Add new settings constants here and declare them `extern` so every file can access them.
-- **`popupViewController.m`** is the settings UI. Each tab is a self-contained `UIView` built in code — no Xib/Storyboard. The file is large but well-sectioned with comments.
-- **`welcomeViewController.m`** handles the first-launch welcome popup — shown once per version install, with spring animation on entry and scale-out on dismiss.
+- **`popupViewController.m`** is the settings UI. Each tab is a self-contained `UIView` built in code — no Xib/Storyboard.
+- **`welcomeViewController.m`** handles the first-launch welcome popup — shown once per version install.
 
 When submitting a PR, please:
 1. Keep hooks focused — one concern per `%hook` block.
@@ -150,10 +150,10 @@ See [CHANGELOG.md](CHANGELOG.md) for a full version history and technical breakd
 
 ## 🏆 Credits
 
-- **[@kohlervg](https://github.com/KohlerVG)** — Project Overhaul: Re-engineered the sensitivity system, keymapping, build mode, import/export functionality, Zero-lag optimizations, and custom PiP.
+- **[@kohlervg](https://github.com/KohlerVG)** — Project Overhaul: Re-engineered the sensitivity system, keymapping, build mode, import/export, zero-lag optimizations, cursor lock system, and custom PiP.
 - **[@rt2746](https://github.com/rt2746)** — Original Author: Creator of the initial [FnMacTweak](https://github.com/rt-someone/FnMacTweak) repository.
-- **[Facebook fishhook](https://github.com/facebook/fishhook)** — Used for `sysctl` hooking in a jailed environment
-- **[PlayCover / PlayTools](https://github.com/PlayCover/PlayTools)** — Inspiration for device model spoofing
+- **[Facebook fishhook](https://github.com/facebook/fishhook)** — Used for `sysctl` hooking in a jailed environment.
+- **[PlayCover / PlayTools](https://github.com/PlayCover/PlayTools)** — Inspiration for device model spoofing.
 
 ---
 

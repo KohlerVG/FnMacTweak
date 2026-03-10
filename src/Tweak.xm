@@ -7,10 +7,149 @@
 
 #import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
+#import <CoreGraphics/CoreGraphics.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 #import <math.h>
 
 // Pre-calculated sensitivity multipliers (computed once at startup via recalculateSensitivities())
 // Formula: (BASE_XY_SENSITIVITY / 100) × (Look% / 100) × MACOS_TO_PC_SCALE
+
+void updateBorderlessMode() {
+
+    @try {
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        
+        Class nsAppClass = NSClassFromString(@"NSApplication");
+        if (!nsAppClass) { return; }
+        
+        id sharedApp = [nsAppClass performSelector:NSSelectorFromString(@"sharedApplication")];
+        NSArray *windows = [sharedApp performSelector:NSSelectorFromString(@"windows")];
+        Class nsWindowClass = NSClassFromString(@"NSWindow");
+
+        for (id window in windows) {
+            // Safety: Only touch actual NSWindow instances
+            if (!nsWindowClass || ![window isKindOfClass:nsWindowClass]) continue;
+            
+            // 1. Style Mask (NSWindowStyleMaskFullSizeContentView = 1 << 15)
+            NSUInteger currentMask = [[window valueForKey:@"styleMask"] unsignedIntegerValue];
+            NSUInteger fullSizeMask = (1ULL << 15);
+            NSUInteger newMask = isBorderlessModeEnabled ? (currentMask | fullSizeMask) : (currentMask & ~fullSizeMask);
+            
+            if (currentMask != newMask) {
+                [window setValue:@(newMask) forKey:@"styleMask"];
+            }
+
+            // 2. Title Bar Transparency & Visibility
+            if ([window respondsToSelector:NSSelectorFromString(@"setTitlebarAppearsTransparent:")]) {
+                [window setValue:@(isBorderlessModeEnabled) forKey:@"titlebarAppearsTransparent"];
+            }
+            if ([window respondsToSelector:NSSelectorFromString(@"setTitleVisibility:")]) {
+                [window setValue:@(isBorderlessModeEnabled ? 1 : 0) forKey:@"titleVisibility"];
+            }
+            
+            // 3. Traffic Lights (Explicit Button Hiding)
+            SEL buttonSel = NSSelectorFromString(@"standardWindowButton:");
+            if ([window respondsToSelector:buttonSel]) {
+                for (NSInteger i = 0; i <= 2; i++) { // 0=Close, 1=Min, 2=Zoom
+                    // Use objc_msgSend for the specific type (NSWindowButton is NSInteger)
+                    typedef id (*ButtonFunc)(id, SEL, NSInteger);
+                    ButtonFunc getButton = (ButtonFunc)objc_msgSend;
+                    id btn = getButton(window, buttonSel, i);
+
+                    if (btn && [btn respondsToSelector:NSSelectorFromString(@"setHidden:")]) {
+                        [btn setValue:@(isBorderlessModeEnabled) forKey:@"hidden"];
+                    }
+                }
+
+                // Titlebar Container (Super-view of close button)
+                typedef id (*ButtonFunc)(id, SEL, NSInteger);
+                id closeBtn = ((ButtonFunc)objc_msgSend)(window, buttonSel, 0);
+                if (closeBtn) {
+                    id container = [closeBtn valueForKey:@"superview"];
+                    if (container && [container respondsToSelector:NSSelectorFromString(@"setHidden:")]) {
+                        [container setValue:@(isBorderlessModeEnabled) forKey:@"hidden"];
+                    }
+                }
+            }
+
+            // 4. Positioning
+                if (isBorderlessModeEnabled) {
+                    // Borderless: Manual center using visibleFrame (excludes macOS menu bar).
+                    // [NSWindow center] uses the full screen frame which causes a vertical
+                    // offset because macOS has a bottom-left origin and the menu bar eats
+                    // into the top. We also wait 100ms (up from 50ms) so the title bar
+                    // hide animation fully settles before we read the window's final size.
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        id screen = [window valueForKey:@"screen"];
+                        if (screen) {
+                            NSValue *visibleFrameVal = [screen valueForKey:@"visibleFrame"];
+                            CGRect visibleFrame = visibleFrameVal ? [visibleFrameVal CGRectValue] : CGRectZero;
+                            CGRect windowFrame = [[window valueForKey:@"frame"] CGRectValue];
+
+                            if (!CGRectIsEmpty(visibleFrame) && !CGRectIsEmpty(windowFrame)) {
+                                CGRect targetFrame = windowFrame;
+                                targetFrame.origin.x = visibleFrame.origin.x + (visibleFrame.size.width  - windowFrame.size.width)  / 2.0;
+                                targetFrame.origin.y = visibleFrame.origin.y + (visibleFrame.size.height - windowFrame.size.height) / 2.0;
+
+                                NSMethodSignature *sig = [window methodSignatureForSelector:NSSelectorFromString(@"setFrame:display:")];
+                                if (sig) {
+                                    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                                    [inv setSelector:NSSelectorFromString(@"setFrame:display:")];
+                                    [inv setTarget:window];
+                                    [inv setArgument:&targetFrame atIndex:2];
+                                    BOOL display = YES;
+                                    [inv setArgument:&display atIndex:3];
+                                    [inv invoke];
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    // Bordered: Top-Aligned Centering
+                    id screen = [window valueForKey:@"screen"];
+                    if (screen) {
+                        CGRect screenFrame = [[screen valueForKey:@"frame"] CGRectValue];
+                        CGRect windowFrame = [[window valueForKey:@"frame"] CGRectValue];
+                        
+                        CGRect targetFrame = windowFrame;
+                        targetFrame.origin.x = screenFrame.origin.x + (screenFrame.size.width - windowFrame.size.width) / 2.0;
+                        targetFrame.origin.y = screenFrame.origin.y + screenFrame.size.height - windowFrame.size.height;
+
+                        NSMethodSignature *sig = [window methodSignatureForSelector:NSSelectorFromString(@"setFrame:display:")];
+                        if (sig) {
+                            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                            [inv setSelector:NSSelectorFromString(@"setFrame:display:")];
+                            [inv setTarget:window];
+                            [inv setArgument:&targetFrame atIndex:2];
+                            BOOL display = YES;
+                            [inv setArgument:&display atIndex:3];
+                            [inv invoke];
+                        }
+                    }
+                }
+
+            if ([window respondsToSelector:NSSelectorFromString(@"setMovableByWindowBackground:")]) {
+                [window setValue:@YES forKey:@"movableByWindowBackground"];
+            }
+        }
+        
+        // UIKit Override: Kill safe areas
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        for (UIWindow *uiWin in [[UIApplication sharedApplication] windows]) {
+        #pragma clang diagnostic pop
+            UIView *rootView = uiWin.rootViewController.view;
+            if (rootView && [rootView respondsToSelector:@selector(setInsetsLayoutMarginsFromSafeArea:)]) {
+                typedef void (*SetInsetsFunc)(id, SEL, BOOL);
+                ((SetInsetsFunc)objc_msgSend)(rootView, @selector(setInsetsLayoutMarginsFromSafeArea:), !isBorderlessModeEnabled);
+            }
+        }
+        #pragma clang diagnostic pop
+    } @catch (NSException *exception) {
+    }
+}
 
 // --------- MOUSE FRACTIONAL ACCUMULATION ---------
 static double mouseAccumX = 0.0;
@@ -18,30 +157,16 @@ static double mouseAccumY = 0.0;
 static BOOL wasADS = NO;
 static BOOL wasADSInitialized = NO;
 
-// --------- BUILD MODE STATE TRACKING ---------
-static BOOL leftButtonIsPressed = NO;
-static BOOL rightButtonIsPressed = NO;
-static BOOL leftClickSentToGame = NO;
+// --------- SCROLL ACCUMULATION ---------
+// macOS delivers integer deltas with acceleration per scroll event.
+// We clamp to 1 tick per event and reset GCKit's cache after each one
+// so consecutive same-direction ticks always fire.
 
-// Store the left button's game handler for triggering from right-click handler
-static GCControllerButtonValueChangedHandler leftButtonGameHandler = nil;
-static GCControllerButtonInput* leftButtonInput = nil;
-
-// Tracks whether Left Option is currently held, and whether a lock gesture
-// (Option + Left Click) was consumed during that hold.
-static BOOL isTriggerHeld = NO;
-// Set when Option+Click consumed a click to LOCK — suppresses that click's release
-static BOOL lockClickConsumed = NO;
-// Set when Option is pressed while already locked — signals unlock-while-firing path
-static BOOL unlockingWhileFiring = NO;
-
-// Cache for UITouch view hierarchy checks (performance optimization)
-static UIView* lastCheckedView = nil;
-static BOOL lastViewWasUIElement = NO;
-
-// Cached keyWindow — looked up once, reused until lock state changes.
-// Invalidated in updateMouseLock() so it re-resolves after mode switches.
-static UIWindow* cachedKeyWindow = nil;
+// --------- KEYBOARD HANDLER REFERENCE ---------
+// Stored once when GCKeyboardInput hook fires — used to synthesize key events
+// from mouse buttons and scroll wheel remaps.
+static GCKeyboardInput *storedKeyboardInput = nil;
+static GCKeyboardValueChangedHandler storedKeyboardHandler = nil;
 
 // --------- DEVICE SPOOFING ---------
 // Intercepts sysctl/sysctlbyname to report DEVICE_MODEL and OEM_ID,
@@ -156,28 +281,19 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     };
     rebind_symbols(rebindings, 2);
 
-    // Version-based initialization for clean updates.
-    // The version is hardcoded here — no postinst needed. %ctor writes
-    // fnmactweak.lastSeenVersion itself, so version bumps are always detected.
-    NSString* currentVersion = @"2.0.4";
+    NSString* currentVersion = @"3.0.0";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {
-        // New install or version update detected
-        // CLEAR custom keybinds (advanced remaps) for clean slate
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:kKeyRemapKey];
-        // CLEAR all welcome popup suppression keys so it always reshows on version bump
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"fnmactweak.welcomeSeenVersion"];
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"fnmactweak.welcomeSuppressed"];
-        // Record this version as seen so we don't repeat until next bump
         [[NSUserDefaults standardUserDefaults] setObject:currentVersion forKey:@"fnmactweak.lastSeenVersion"];
     }
     [[NSUserDefaults standardUserDefaults] synchronize];
 
-    // Load BUILD mode setting (default: NO = ZERO BUILD mode)
     isBuildModeEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:kBuildModeKey];
 
-    // Restore folder access
     NSData *bookmark = [[NSUserDefaults standardUserDefaults] dataForKey:@"fnmactweak.datafolder"];
     if (bookmark) {
         BOOL stale = NO;
@@ -187,19 +303,14 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                                          relativeToURL:nil
                                    bookmarkDataIsStale:&stale
                                                  error:&error];
-        
         if (url) {
             [url startAccessingSecurityScopedResource];
         }
     }
 
-    // Initialize key bindings
     TRIGGER_KEY = GCKeyCodeLeftAlt;
     POPUP_KEY = GCKeyCodeKeyP;
     
-    // Load saved sensitivity settings BEFORE recalculating.
-    // Without this, recalculateSensitivities() uses hardcoded defaults
-    // and the user's saved values only apply after opening the P menu.
     NSDictionary *savedSettings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSettingsKey];
     if (savedSettings) {
         float v;
@@ -211,30 +322,149 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         v = [savedSettings[kScaleKey]  floatValue]; if (v > 0) MACOS_TO_PC_SCALE   = v;
     }
 
-    // OPTIMIZATION: Pre-calculate sensitivities once at startup
     recalculateSensitivities();
-    
-    // Load key remappings (Advanced Custom Remaps)
     loadKeyRemappings();
-    
-    // Load Fortnite keybinds into fast array
     loadFortniteKeybinds();
 
-    // Show welcome screen on first launch (safe — uses FnOverlayWindow,
-    // never steals key window, no dispatch_after race with GCMouse)
     showWelcomePopupIfNeeded();
+
+    isBorderlessModeEnabled = [tweakDefaults() boolForKey:kBorderlessWindowKey];
+    // The NSWindow hook handles styling before the window appears.
+    // For positioning, we listen for the window becoming key — this fires once
+    // the window is fully on screen and settled, with no race condition.
+    // We unregister immediately after the first fire so it never runs again.
+    if (isBorderlessModeEnabled) {
+        id __block observer = [[NSNotificationCenter defaultCenter]
+            addObserverForName:NSNotificationName(@"NSWindowDidBecomeKeyNotification")
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note) {
+                        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+                        observer = nil;
+                        updateBorderlessMode();
+                    }];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Bypasses GCKit entirely to catch true hardware scroll ticks.
+    Class nsEventClass = NSClassFromString(@"NSEvent");
+    if (nsEventClass) {
+        // Use performSelector since we don't have AppKit headers imported.
+        // Equivalent to:
+        // [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel handler:...]
+        // NSEventMaskScrollWheel = 1ULL << 22
+        unsigned long long scrollMask = 1ULL << 22;
+        
+        // Cache the SEL once — NSSelectorFromString does a string hash lookup,
+        // no need to repeat it on every scroll event.
+        static SEL scrollingDeltaYSel = NULL;
+        if (!scrollingDeltaYSel) scrollingDeltaYSel = NSSelectorFromString(@"scrollingDeltaY");
+
+        id (^handlerBlock)(id) = ^id (id event) {
+            // Use objc_msgSend directly — avoids NSInvocation alloc on every scroll tick.
+            if (![event respondsToSelector:scrollingDeltaYSel]) return event;
+            CGFloat deltaY = ((CGFloat(*)(id, SEL))objc_msgSend)(event, scrollingDeltaYSel);
+
+            if (deltaY == 0) return event;
+
+            // macOS deltaY is positive for UP, negative for DOWN
+            int scrollCode = (deltaY > 0) ? MOUSE_SCROLL_UP : MOUSE_SCROLL_DOWN;
+            int idx = scrollCode - MOUSE_SCROLL_UP;
+            
+            GCKeyCode kc = (idx >= 0 && idx < MOUSE_SCROLL_COUNT) ? mouseScrollRemapArray[idx] : 0;
+            // Fall back to Fortnite default keybind if no advanced remap is set
+            if (kc == 0 && idx >= 0 && idx < MOUSE_SCROLL_COUNT)
+                kc = mouseScrollFortniteArray[idx];
+            
+            // PRIORITY 1: Handle User UI overrides (Capture Mode)
+            // Even if the mouse is unlocked (we are in the Tweak Settings Menu),
+            // this needs to be able to catch the scroll direction!
+            if (mouseButtonCaptureCallback != nil) {
+                mouseButtonCaptureCallback(scrollCode);
+                return nil;
+            }
+
+            // Normal scroll behavior requires the engine to have a keyboard and lock
+            if (!isMouseLocked || !storedKeyboardHandler || !storedKeyboardInput) return event;
+            
+            // PRIORITY 2: Handle Key Remaps (Zero Delay)
+            // Scroll ticks are discrete — fire press then release synchronously,
+            // identical to how PRIORITY 3 fires pad value + immediate reset.
+            // The old 10ms dispatch_after caused overlapping held-key states on fast scroll.
+            if (kc != 0 && storedKeyboardHandler && storedKeyboardInput) {
+                GCControllerButtonInput *dummyBtn = [storedKeyboardInput buttonForKeyCode:GCKeyCodeKeyA];
+                storedKeyboardHandler(storedKeyboardInput, dummyBtn, kc, YES);
+                storedKeyboardHandler(storedKeyboardInput, dummyBtn, kc, NO);
+
+                // IMPORTANT: Consume the hardware event here so it DOES NOT reach Priority 3!
+                return nil;
+            }
+
+            // PRIORITY 3: Handle Raw Unmapped Game Scroll (Zero Delay)
+            // If the user hasn't remapped the scroll wheel, we still want to bypass
+            // GCKit's deduping. We manually grab the current mouse's scroll pad and
+            // inject the tick directly into the game's registered handler.
+            //
+            // IMPORTANT: If EITHER scroll direction (up or down) has a keybind assigned,
+            // suppress raw scroll entirely — we never want weapon-switch scroll to bleed
+            // through alongside a key press.
+            BOOL anyScrollBound = NO;
+            for (int i = 0; i < MOUSE_SCROLL_COUNT; i++) {
+                if (mouseScrollRemapArray[i] != 0 || mouseScrollFortniteArray[i] != 0) {
+                    anyScrollBound = YES;
+                    break;
+                }
+            }
+            if (anyScrollBound) return nil;
+
+            GCMouse *currentMouse = GCMouse.current;
+            if (currentMouse && currentMouse.mouseInput) {
+                GCControllerDirectionPad *scrollPad = currentMouse.mouseInput.scroll;
+                if (scrollPad && scrollPad.valueChangedHandler) {
+                    float yVal = (deltaY > 0) ? 1.0f : -1.0f;
+                    
+                    // Dispatch directly to the game synchronously
+                    scrollPad.valueChangedHandler(scrollPad, 0.0f, yVal);
+                    
+                    // Reset internal state to ensure game logic doesn't drop it internally
+                    if ([scrollPad.yAxis respondsToSelector:@selector(setValue:)]) {
+                        [scrollPad.yAxis setValue:0.0f];
+                    }
+                    
+                    // Send an immediate center (0.0) tick so the game engine recognizes
+                    // it as a distinct discrete toggle rather than a held input.
+                    scrollPad.valueChangedHandler(scrollPad, 0.0f, 0.0f);
+                }
+            }
+
+            // Consume the original GCKit event off the native layer so we don't double-fire
+            return nil;
+        };
+        
+        SEL addMonitorSel = NSSelectorFromString(@"addLocalMonitorForEventsMatchingMask:handler:");
+        if ([nsEventClass respondsToSelector:addMonitorSel]) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[nsEventClass methodSignatureForSelector:addMonitorSel]];
+            [inv setSelector:addMonitorSel];
+            [inv setTarget:nsEventClass];
+            
+            [inv setArgument:&scrollMask atIndex:2];
+            
+            id blockArg = [handlerBlock copy];
+            [inv setArgument:&blockArg atIndex:3];
+            
+            [inv invoke];
+        }
+    }
 }
 
 // --------- HELPER FUNCTIONS ---------
 
-// Helper to align coordinates to pixel boundaries
 static inline CGFloat PixelAlign(CGFloat value) {
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
     CGFloat scale = scene.screen.scale ?: 2.0;
     return round(value * scale) / scale;
 }
 
-// Initialize the popup window
 static void createPopup() {
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication] connectedScenes].anyObject;
     popupWindow = [[UIWindow alloc] initWithWindowScene:scene];
@@ -244,23 +474,14 @@ static void createPopup() {
     CGRect screen = scene ? scene.screen.bounds : CGRectMake(0, 0, 390, 844);
     CGFloat centeredY = PixelAlign((screen.size.height - popupH) / 2.0);
 
-    popupWindow.frame = CGRectMake(
-        PixelAlign(100.0),
-        centeredY,
-        popupW,
-        popupH
-    );
-    
+    popupWindow.frame = CGRectMake(PixelAlign(100.0), centeredY, popupW, popupH);
     popupWindow.windowLevel = UIWindowLevelAlert + 1;
-    popupWindow.backgroundColor = [UIColor clearColor];  // Make window transparent
-    // Don't set corner radius on window - let the view controller handle it
+    popupWindow.backgroundColor = [UIColor clearColor];
     
     popupViewController *popupVC = [popupViewController new];
     popupWindow.rootViewController = popupVC;
 }
 
-// Open the P settings pane directly on the Quick Start tab.
-// Called by the welcome screen's "Continue to Quick Start Guide" button.
 void showPopupOnQuickStartTab(void) {
     if (!popupWindow) createPopup();
     isPopupVisible = YES;
@@ -271,49 +492,39 @@ void showPopupOnQuickStartTab(void) {
     }
 }
 
-// Create the red dot target indicator for BUILD mode
 void createRedDotIndicator() {
-    if (redDotIndicator) return; // Already created
+    if (redDotIndicator) return;
     
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication] connectedScenes].anyObject;
     if (!scene) return;
     
-    // Create a small red dot (20x20 pixels)
     redDotIndicator = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 20)];
     redDotIndicator.backgroundColor = [UIColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.8];
-    redDotIndicator.layer.cornerRadius = 10; // Make it circular
+    redDotIndicator.layer.cornerRadius = 10;
     redDotIndicator.layer.borderWidth = 2;
     redDotIndicator.layer.borderColor = [UIColor whiteColor].CGColor;
-    redDotIndicator.hidden = YES; // Start hidden
+    redDotIndicator.hidden = YES;
     redDotIndicator.userInteractionEnabled = YES;
     
-    // Add a pan gesture to make it draggable
     UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:redDotIndicator action:nil];
     __weak UIView *weakDot = redDotIndicator;
     [panGesture addTarget:weakDot action:@selector(handlePan:)];
     [redDotIndicator addGestureRecognizer:panGesture];
     
-    // Get the main game window
     UIWindow *keyWindow = scene.keyWindow ?: scene.windows.firstObject;
     if (keyWindow) {
         [keyWindow addSubview:redDotIndicator];
         
-        // Load saved position from UserDefaults, or use center as default
         CGRect screenBounds = keyWindow.bounds;
         NSDictionary *savedPosition = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kRedDotPositionKey];
         
         if (savedPosition) {
-            // Use saved position
             CGFloat x = [savedPosition[@"x"] floatValue];
             CGFloat y = [savedPosition[@"y"] floatValue];
-            
-            // Validate bounds (in case screen size changed)
             x = MAX(10, MIN(screenBounds.size.width - 10, x));
             y = MAX(10, MIN(screenBounds.size.height - 10, y));
-            
             redDotTargetPosition = CGPointMake(x, y);
         } else {
-            // Initialize position at center of screen (first time)
             redDotTargetPosition = CGPointMake(screenBounds.size.width / 2, screenBounds.size.height / 2);
         }
         
@@ -321,44 +532,41 @@ void createRedDotIndicator() {
     }
 }
 
-// Reset red dot position to center of screen
 void resetRedDotPosition(void) {
-    if (!redDotIndicator) {
-        createRedDotIndicator();
-    }
+    if (!redDotIndicator) createRedDotIndicator();
     
     if (redDotIndicator && redDotIndicator.superview) {
-        // Get screen bounds
         CGRect screenBounds = redDotIndicator.superview.bounds;
-        
-        // Reset to center
         CGPoint centerPosition = CGPointMake(screenBounds.size.width / 2, screenBounds.size.height / 2);
         redDotTargetPosition = centerPosition;
         redDotIndicator.center = centerPosition;
         
-        // Save the reset position
-        NSDictionary *positionDict = @{
-            @"x": @(centerPosition.x),
-            @"y": @(centerPosition.y)
-        };
+        NSDictionary *positionDict = @{@"x": @(centerPosition.x), @"y": @(centerPosition.y)};
         [[NSUserDefaults standardUserDefaults] setObject:positionDict forKey:kRedDotPositionKey];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
 }
 
-// Show or hide the red dot indicator
 void updateRedDotVisibility(void) {
-    if (!redDotIndicator) {
-        createRedDotIndicator();
-    }
-    
-    // Show red dot when: BUILD mode enabled AND settings popup IS visible
-    // Hide when popup is closed or build mode is disabled
+    if (!redDotIndicator) createRedDotIndicator();
     BOOL shouldShow = isBuildModeEnabled && isPopupVisible;
     redDotIndicator.hidden = !shouldShow;
 }
 
-// Force a pointer lock update
+// --------- BUTTON STATE (must be before updateMouseLock) ---------
+static BOOL leftButtonIsPressed  = NO;
+static BOOL rightButtonIsPressed = NO;
+static BOOL leftClickSentToGame  = NO;
+static GCControllerButtonValueChangedHandler leftButtonGameHandler = nil;
+static GCControllerButtonValueChangedHandler leftButtonRawHandler  = nil; // raw game handler, never the wrapper
+static GCControllerButtonInput *leftButtonInput = nil;
+static BOOL isTriggerHeld        = NO;
+static BOOL lockClickConsumed    = NO;
+static BOOL unlockingWhileFiring = NO;
+static UIView  *lastCheckedView     = nil;
+static BOOL     lastViewWasUIElement = NO;
+static UIWindow *cachedKeyWindow    = nil;
+
 static void updateMouseLock(BOOL value) {
     UIWindowScene *scene = (UIWindowScene *)[[[UIApplication sharedApplication].connectedScenes allObjects] firstObject];
     if (!scene) return;
@@ -369,393 +577,441 @@ static void updateMouseLock(BOOL value) {
     UIViewController *mainViewController = keyWindow.rootViewController;
     [mainViewController setNeedsUpdateOfPrefersPointerLocked];
 
-    if (!value) {
-        mouseAccumX = 0.0;
-        mouseAccumY = 0.0;
-        wasADSInitialized = NO;
-
-        // Snapshot refs before clearing state
+    if (value) {
+        // LOCKING — cancel any in-flight click before the lock gesture takes hold.
+        // UITouch clicks (leftButtonIsPressed && !leftClickSentToGame) only need
+        // _cancelAllTouches — no GC release since no GC press was sent.
+        // GC clicks (leftClickSentToGame) need both _cancelAllTouches and GC release.
+        BOOL hadGCPress = leftClickSentToGame;  // GC press was actually sent to game
         GCControllerButtonValueChangedHandler gcHandler = leftButtonGameHandler;
         GCControllerButtonInput *gcInput = leftButtonInput;
-        BOOL buttonWasDown = leftButtonIsPressed;
 
-        // Reset all button state flags immediately so no re-entrant events slip through
         leftButtonIsPressed  = NO;
-        rightButtonIsPressed = NO;
         leftClickSentToGame  = NO;
-        lockClickConsumed    = NO;
-        unlockingWhileFiring = NO;
-
-        // Invalidate caches so they re-resolve after mode/window changes
-        cachedKeyWindow   = nil;
-        lastCheckedView   = nil;
+        lastCheckedView      = nil;
         lastViewWasUIElement = NO;
 
-        // Dispatch cleanup on next run loop tick — after isMouseLocked is fully
-        // committed and prefersPointerLocked has been re-queried — so any
-        // re-entrant UITouch or GC events from _cancelAllTouches see a clean state.
-        dispatch_async(dispatch_get_main_queue(), ^{
-            // Cancel any live UITouches so nothing stays stuck in the UI layer
+        // Cancel all touches synchronously on the main thread — async dispatch
+        // allows new touches from the lock gesture itself to land before cancel runs.
+        void (^cancelBlock)(void) = ^{
             UIApplication *app = [UIApplication sharedApplication];
             static IMP cancelAllTouchesIMP = NULL;
             if (!cancelAllTouchesIMP)
                 cancelAllTouchesIMP = [app methodForSelector:@selector(_cancelAllTouches)];
             if (cancelAllTouchesIMP)
                 ((void (*)(id, SEL))cancelAllTouchesIMP)(app, @selector(_cancelAllTouches));
-
-            // Send GC button-up if left click was physically held — covers both
-            // Zero Build (GC path) and Build mode (UITouch path) since either way
-            // the game may have a press in-flight.
-            if (buttonWasDown && gcHandler && gcInput) {
+            // Only send GC release if a GC press was actually sent.
+            if (hadGCPress && gcHandler && gcInput)
                 gcHandler(gcInput, 0.0, NO);
-            }
-        });
+        };
+        if ([NSThread isMainThread]) cancelBlock();
+        else dispatch_sync(dispatch_get_main_queue(), cancelBlock);
+    } else {
+        // UNLOCKING — full state wipe and cancel everything.
+        mouseAccumX = 0.0;
+        mouseAccumY = 0.0;
+        wasADSInitialized = NO;
+
+        GCControllerButtonValueChangedHandler gcHandler = leftButtonGameHandler;
+        GCControllerButtonInput *gcInput = leftButtonInput;
+        BOOL hadUITouch = leftButtonIsPressed;
+        BOOL hadGCPress = leftClickSentToGame;
+
+        leftButtonIsPressed  = NO;
+        rightButtonIsPressed = NO;
+        leftClickSentToGame  = NO;
+        lockClickConsumed    = YES; // block any further clicks while Option is still held
+        unlockingWhileFiring = NO;
+        leftButtonRawHandler = nil;
+        cachedKeyWindow      = nil;
+        lastCheckedView      = nil;
+        lastViewWasUIElement = NO;
+
+        if (hadUITouch || hadGCPress) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIApplication *app = [UIApplication sharedApplication];
+                static IMP cancelAllTouchesIMP = NULL;
+                if (!cancelAllTouchesIMP)
+                    cancelAllTouchesIMP = [app methodForSelector:@selector(_cancelAllTouches)];
+                if (cancelAllTouchesIMP)
+                    ((void (*)(id, SEL))cancelAllTouchesIMP)(app, @selector(_cancelAllTouches));
+                // Only send GC release if a GC press was actually sent.
+                if (hadGCPress && gcHandler && gcInput)
+                    gcHandler(gcInput, 0.0, NO);
+            });
+        }
     }
 
-    // Update red dot visibility based on lock state
     updateRedDotVisibility();
 }
 
 // --------- THEOS HOOKS ---------
 
-// Mouse movement handling with perfect PC sensitivity matching
+
+
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Mouse movement — PC-accurate sensitivity
+// ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// installMouseButtonHandlers
+// Called from setMouseMovedHandler — guaranteed to fire because Fortnite
+// always calls it. At this point self is the fully connected GCMouseInput
+// and all button objects exist. We use valueChangedHandler on middle and
+// all aux buttons — it's a separate property from pressedChangedHandler,
+// so Fortnite's own handler setup can never overwrite ours.
+// ─────────────────────────────────────────────────────────────────────
+static void installMouseButtonHandlers(GCMouseInput *mi) {
+    void (^installFor)(GCControllerButtonInput*, int) =
+        ^(GCControllerButtonInput *btn, int buttonCode) {
+            if (!btn) return;
+            btn.valueChangedHandler = ^(GCControllerButtonInput *b, float value, BOOL pressed) {
+                if (pressed && mouseButtonCaptureCallback) {
+                    mouseButtonCaptureCallback(buttonCode);
+                    return;
+                }
+                if (!isMouseLocked) return;
+
+                int idx = buttonCode - MOUSE_BUTTON_MIDDLE;
+                if (idx < 0 || idx >= MOUSE_REMAP_COUNT) return;
+
+                GCKeyCode kc = mouseButtonRemapArray[idx];
+                if (kc == 0) return;
+
+                if (storedKeyboardHandler && storedKeyboardInput) {
+                    GCControllerButtonInput *dummyBtn = [storedKeyboardInput buttonForKeyCode:GCKeyCodeKeyA];
+                    storedKeyboardHandler(storedKeyboardInput, dummyBtn, kc, pressed);
+                }
+            };
+        };
+
+    installFor(mi.middleButton, MOUSE_BUTTON_MIDDLE);
+    NSArray<GCControllerButtonInput *> *aux = mi.auxiliaryButtons;
+    for (NSInteger i = 0; i < (NSInteger)aux.count; i++) {
+        installFor(aux[i], (int)(MOUSE_BUTTON_AUX_BASE + i));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// NSWindow hook — apply borderless state the instant the window is about
+// to appear on screen, before any pixels are drawn. This eliminates the
+// visible shift/flash on launch.
+// ─────────────────────────────────────────────────────────────────────
+%hook NSWindow
+
+- (void)makeKeyAndOrderFront:(id)sender {
+    if (isBorderlessModeEnabled) {
+        id win = self;
+        NSUInteger currentMask = [[win valueForKey:@"styleMask"] unsignedIntegerValue];
+        NSUInteger fullSizeMask = (1ULL << 15);
+        [win setValue:@(currentMask | fullSizeMask) forKey:@"styleMask"];
+        [win setValue:@YES forKey:@"titlebarAppearsTransparent"];
+        [win setValue:@(1) forKey:@"titleVisibility"];
+
+        SEL buttonSel = NSSelectorFromString(@"standardWindowButton:");
+        typedef id (*ButtonFunc)(id, SEL, NSInteger);
+        for (NSInteger i = 0; i <= 2; i++) {
+            id btn = ((ButtonFunc)objc_msgSend)(win, buttonSel, i);
+            if (btn) [btn setValue:@YES forKey:@"hidden"];
+        }
+        id closeBtn = ((ButtonFunc)objc_msgSend)(win, buttonSel, 0);
+        if (closeBtn) {
+            id container = [closeBtn valueForKey:@"superview"];
+            if (container) [container setValue:@YES forKey:@"hidden"];
+        }
+    }
+    %orig;
+}
+
+%end
+
 %hook GCMouseInput
 
 - (void)setMouseMovedHandler:(GCMouseMoved)handler {
-    if (!handler) {
-        %orig;
-        return;
-    }
+    if (!handler) { %orig; return; }
 
-    // Ensure GCMouse delivers all input callbacks on the main queue.
     GCMouse *currentMouse = GCMouse.current;
-    if (currentMouse && currentMouse.handlerQueue != dispatch_get_main_queue()) {
+    if (currentMouse && currentMouse.handlerQueue != dispatch_get_main_queue())
         currentMouse.handlerQueue = dispatch_get_main_queue();
-    }
-    
-    GCMouseMoved customHandler = ^(GCMouseInput * _Nonnull eventMouse, float deltaX, float deltaY) {
+
+    // Install handlers on middle + all aux buttons right now.
+    // self IS the GCMouseInput — all buttons are fully constructed at this point.
+    installMouseButtonHandlers(self);
+
+    // Fix #2: reset accumulator state whenever the game re-registers its handler
+    // (e.g. on respawn, menu transitions). Prevents stale ADS/hip state from
+    // injecting a wrong-mode remainder into the first event after re-registration.
+    mouseAccumX = 0.0;
+    mouseAccumY = 0.0;
+    wasADSInitialized = NO;
+
+    GCMouseMoved customHandler = ^(GCMouseInput *eventMouse, float deltaX, float deltaY) {
         if (!isMouseLocked) return;
 
         BOOL isADS = (eventMouse.rightButton.value == 1.0);
+        if (!wasADSInitialized) { wasADS = isADS; wasADSInitialized = YES; }
+        if (isADS != wasADS) { mouseAccumX = 0.0; mouseAccumY = 0.0; wasADS = isADS; }
 
-        if (!wasADSInitialized) {
-            wasADS = isADS;
-            wasADSInitialized = YES;
-        }
-
-        if (isADS != wasADS) {
-            mouseAccumX = 0.0;
-            mouseAccumY = 0.0;
-            wasADS = isADS;
-        }
-
-        // PC FORTNITE EXACT SENSITIVITY FORMULA - OPTIMIZED
         mouseAccumX += deltaX * (isADS ? adsSensitivityX : hipSensitivityX);
         mouseAccumY += deltaY * (isADS ? adsSensitivityY : hipSensitivityY);
 
-        // roundf instead of int cast — keeps the fractional remainder for
-        // next event (preserving precision) but distributes it evenly rather
-        // than always truncating toward zero (which caused burst lag).
-        float outX = roundf((float)mouseAccumX);
-        float outY = roundf((float)mouseAccumY);
-
+        // Fix #1: use double-precision round() instead of roundf() so the
+        // remainder carried back into the double accum is never degraded by
+        // a float cast before subtraction. Cast to float only at dispatch.
+        double outX = round(mouseAccumX);
+        double outY = round(mouseAccumY);
         mouseAccumX -= outX;
         mouseAccumY -= outY;
 
-        if (outX != 0.0f || outY != 0.0f) {
-            handler(eventMouse, outX, outY);
-        }
+        if (outX != 0.0 || outY != 0.0) handler(eventMouse, (float)outX, (float)outY);
     };
-
     %orig(customHandler);
 }
 
 %end
 
-// Also set handlerQueue on the GCMouse object itself whenever a new
-// mouse connects — covers the case where setMouseMovedHandler is called
-// before we've had a chance to set the queue.
+// ─────────────────────────────────────────────────────────────────────
+// GCMouse hook — ensure callbacks fire on main queue.
+// ─────────────────────────────────────────────────────────────────────
 %hook GCMouse
 
 - (GCMouseInput *)mouseInput {
-    // Set handlerQueue only once — flag prevents repeated work on every .mouseInput access
     static BOOL handlerQueueSet = NO;
     if (!handlerQueueSet && self.handlerQueue != dispatch_get_main_queue()) {
         self.handlerQueue = dispatch_get_main_queue();
         handlerQueueSet = YES;
     }
-    return %orig;
+    GCMouseInput *mi = %orig;
+    if (!mi) return mi;
+    // If the aux button array grew since last check, reinstall valueChangedHandlers
+    // so any newly-appeared buttons get covered.
+    static NSUInteger lastAuxCount = 0;
+    NSUInteger currentCount = mi.auxiliaryButtons.count;
+    if (currentCount > lastAuxCount) {
+        lastAuxCount = currentCount;
+        installMouseButtonHandlers(mi);
+    }
+    return mi;
 }
 
 %end
 
-// Handle scroll wheel for remapping
+// ─────────────────────────────────────────────────────────────────────
+// GCKit Scroll direction pad
+// ─────────────────────────────────────────────────────────────────────
+// Completely disabled and suppressed. All scroll logic is handled natively 
+// by AppKit NSEvent monitor at 0ms latency for perfect 1:1 hardware ticks.
 %hook GCControllerDirectionPad
 
-- (void)setValueChangedHandler:(void (^)(GCControllerDirectionPad* _Nonnull, float, float))handler {
-    // Only intercept the mouse scroll pad, not all direction pads.
-    // Use respondsToSelector: to guard the .scroll property, which is Tahoe-only (macOS 16+).
-    // On Sequoia (macOS 15), we fall back to checking if this pad belongs to any mouse's input
-    // by comparing against the known scroll pad via the older API path.
+- (void)setValueChangedHandler:(void (^)(GCControllerDirectionPad *, float, float))handler {
     GCMouse *currentMouse = GCMouse.current;
     BOOL isScrollPad = NO;
     if (currentMouse && currentMouse.mouseInput) {
         GCMouseInput *mouseInput = currentMouse.mouseInput;
         if ([mouseInput respondsToSelector:@selector(scroll)]) {
-            // Tahoe+: use the dedicated scroll property
             isScrollPad = ([mouseInput scroll] == self);
         } else {
-            // Sequoia fallback: scroll pads are direction pads not equal to any thumbstick/dpad
-            // We identify the scroll pad by checking it isn't a button-backed pad (it has no buttons)
             isScrollPad = (self.xAxis != nil && self.yAxis != nil &&
                            self.up == nil && self.down == nil &&
                            self.left == nil && self.right == nil);
         }
     }
-    if (!isScrollPad) {
-        %orig;
-        return;
-    }
-    if (!handler) {
-        %orig;
-        return;
-    }
     
-    void (^customHandler)(GCControllerDirectionPad*, float, float) = ^(GCControllerDirectionPad* scroll, float x, float y) {
-        // Detect scroll direction
-        if (y > 0.5) {
-            // Scroll up detected
-            if (mouseButtonCaptureCallback != nil) {
-                mouseButtonCaptureCallback(MOUSE_SCROLL_UP);
-                return; // Don't pass through when capturing
-            } else if (isMouseLocked) {
-                handler(scroll, x, y);
+    // If it's a regular D-PAD on a controller, let it through normally
+    if (!isScrollPad || !handler) { 
+        %orig; 
+        return; 
+    }
+
+    // Wrap the handler: if ANY scroll direction has a keybind assigned, suppress
+    // the raw scroll entirely — the NSEvent monitor handles it as a key press instead.
+    // If no keybinds are set, pass through normally so the game gets weapon-switch scroll.
+    void (^wrappedHandler)(GCControllerDirectionPad *, float, float) =
+        ^(GCControllerDirectionPad *pad, float xValue, float yValue) {
+            BOOL anyScrollBound = NO;
+            for (int i = 0; i < MOUSE_SCROLL_COUNT; i++) {
+                if (mouseScrollRemapArray[i] != 0 || mouseScrollFortniteArray[i] != 0) {
+                    anyScrollBound = YES;
+                    break;
+                }
             }
-        } else if (y < -0.5) {
-            // Scroll down detected
-            if (mouseButtonCaptureCallback != nil) {
-                mouseButtonCaptureCallback(MOUSE_SCROLL_DOWN);
-                return; // Don't pass through when capturing
-            } else if (isMouseLocked) {
-                handler(scroll, x, y);
-            }
-        } else {
-            // Normal scroll or no scroll
-            if (isMouseLocked) {
-                handler(scroll, x, y);
-            }
-        }
-    };
-    
-    %orig(customHandler);
+            if (anyScrollBound) return;
+            handler(pad, xValue, yValue);
+        };
+    %orig(wrappedHandler);
+
+    // Nuke the underlying reporting so GCKit stops sending duplicate events
+    if ([self.yAxis respondsToSelector:@selector(setValue:)]) {
+        [self.yAxis setValue:0.0f];
+    }
 }
 
 %end
-
-// Handle mouse clicks - DUAL MODE: ZERO BUILD vs BUILD
+//
+// DESIGN: At hook-registration time (setPressedChangedHandler: call), we check
+// self against GCMouse.current.mouseInput to classify this button. If the mouse
+// isn't ready yet (nil), we install a universal handler that classifies at
+// press-time by scanning all mice. This covers every timing scenario.
+// ─────────────────────────────────────────────────────────────────────
 %hook GCControllerButtonInput
 
 - (void)setPressedChangedHandler:(GCControllerButtonValueChangedHandler)handler {
-    if (!handler) {
+    if (!handler) { %orig; return; }
+
+    // ── Classify this button at registration time ─────────────────────
+    // Check every connected mouse — not just GCMouse.current, because
+    // multiple mice may be connected and current may not be set yet.
+    typedef enum { kNotMouse, kLeft, kRight, kMiddleOrAux } ButtonRole;
+    ButtonRole role = kNotMouse;
+
+    for (GCMouse *mouse in GCMouse.mice) {
+        GCMouseInput *mi = mouse.mouseInput;
+        if (!mi) continue;
+        if (mi.leftButton  == self) { role = kLeft;  break; }
+        if (mi.rightButton == self) { role = kRight; break; }
+        if (mi.middleButton == self) { role = kMiddleOrAux; break; }
+        for (GCControllerButtonInput *btn in mi.auxiliaryButtons) {
+            if (btn == self) { role = kMiddleOrAux; break; }
+        }
+        if (role != kNotMouse) break;
+    }
+
+    // ── Not identified as any mouse button — pass through unchanged ───
+    if (role == kNotMouse) {
         %orig;
         return;
     }
 
-    GCMouse *currentMouse = GCMouse.current;
-    BOOL isLeftButton = (currentMouse && currentMouse.mouseInput && 
-                        currentMouse.mouseInput.leftButton == self);
-    BOOL isRightButton = (currentMouse && currentMouse.mouseInput && 
-                         currentMouse.mouseInput.rightButton == self);
-    BOOL isMiddleButton = (currentMouse && currentMouse.mouseInput && 
-                          currentMouse.mouseInput.middleButton == self);
-    BOOL isAuxButton1 = (currentMouse && currentMouse.mouseInput &&
-                        currentMouse.mouseInput.auxiliaryButtons.count > 0 &&
-                        currentMouse.mouseInput.auxiliaryButtons[0] == self);
-    BOOL isAuxButton2 = (currentMouse && currentMouse.mouseInput &&
-                        currentMouse.mouseInput.auxiliaryButtons.count > 1 &&
-                        currentMouse.mouseInput.auxiliaryButtons[1] == self);
+    // ── Build the custom handler based on role ────────────────────────
+    GCControllerButtonValueChangedHandler customHandler = nil;
 
-    if (isRightButton) {
-        GCControllerButtonValueChangedHandler customHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-
-            if (isBuildModeEnabled) {
-                if (pressed && !rightButtonIsPressed) {
-                    // ---- RIGHT CLICK DOWN ----
-                    // If left is held as UITouch (leftClickSentToGame=NO), transition it
-                    // to GC mode synchronously so press and release can't get out of order.
-                    if (leftButtonIsPressed && !leftClickSentToGame) {
-                        // 1. Cancel the UITouch first
-                        UIApplication *app = [UIApplication sharedApplication];
-                        if ([app respondsToSelector:@selector(_cancelAllTouches)]) {
-                            [app performSelector:@selector(_cancelAllTouches)];
-                        }
-                        // 2. Mark as sent BEFORE sending so release handler is always consistent
-                        leftClickSentToGame = YES;
-                        // 3. Send the GC press synchronously — no dispatch_async race
-                        if (leftButtonGameHandler && leftButtonInput) {
-                            leftButtonGameHandler(leftButtonInput, 1.0, YES);
-                        }
-                    }
-                } else if (!pressed && rightButtonIsPressed) {
-                    // ---- RIGHT CLICK RELEASE (ADS released) ----
-                    // If left is still held and was sent as GC, send GC release now
-                    // because left click is transitioning back to UITouch mode.
-                    // Without this, the game keeps ADS-firing with no way to release.
-                    if (leftButtonIsPressed && leftClickSentToGame) {
-                        if (leftButtonGameHandler && leftButtonInput) {
-                            leftButtonGameHandler(leftButtonInput, 0.0, NO);
-                        }
-                        leftClickSentToGame = NO;
-                        // Left button is still physically held — it will re-register
-                        // as a UITouch on the next frame naturally. Reset pressed state
-                        // so the left button handler re-enters correctly.
-                        leftButtonIsPressed = NO;
-                    }
-                }
-            }
-
-            rightButtonIsPressed = pressed;
-
-            if (isMouseLocked) {
-                handler(button, value, pressed);
-            }
-        };
-
-        %orig(customHandler);
-    } else if (isLeftButton) {
-        GCControllerButtonValueChangedHandler customHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            // Store the handler and button reference for use from right-click handler
-            leftButtonGameHandler = handler;
+    if (role == kLeft) {
+        customHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
+            leftButtonGameHandler = handler; // wrapper — do NOT call from right button
+            leftButtonRawHandler  = handler; // raw game handler — safe to call directly
             leftButtonInput = button;
 
-            // ===== LOCK GESTURE: Option+Click while unlocked — suppress entirely =====
-            if (isTriggerHeld && !unlockingWhileFiring) {
-                if (pressed) {
-                    lockClickConsumed = YES;
-                    isMouseLocked = YES;
-                    updateMouseLock(YES);
+            if (isTriggerHeld) {
+                if (!pressed) {
+                    // RELEASE while Option held — always clean up any in-flight click
+                    // state regardless of lockClickConsumed, so nothing is ever left stuck.
+                    BOOL hadGCPress = leftClickSentToGame;
+                    leftButtonIsPressed = NO;
+                    leftClickSentToGame = NO;
+                    if (hadGCPress)
+                        handler(button, 0.0, NO); // matched GC release for the prior press
+                } else if (!lockClickConsumed) {
+                    // PRESS — only act on the first click per Option hold.
+                    if (!unlockingWhileFiring) {
+                        // Left Option + Left Click while unlocked → LOCK
+                        lockClickConsumed = YES; isMouseLocked = YES; updateMouseLock(YES);
+                    } else {
+                        // Left Option + Left Click while locked → UNLOCK
+                        lockClickConsumed = YES; isMouseLocked = NO; updateMouseLock(NO);
+                    }
                 }
-                return; // suppress both press and release
-            }
-            // Suppress the release paired to a consumed lock gesture press
-            if (lockClickConsumed && !pressed) {
-                lockClickConsumed = NO;
                 return;
             }
+            if (lockClickConsumed && !pressed) { lockClickConsumed = NO; return; }
 
             if (isMouseLocked) {
                 if (!isBuildModeEnabled) {
-                    // ===== ZERO BUILD MODE =====
                     if (pressed) {
-                        leftButtonIsPressed = YES;
-                        leftClickSentToGame = YES;
+                        leftButtonIsPressed = YES; leftClickSentToGame = YES;
+                        handler(button, value, pressed);
                     } else {
                         leftButtonIsPressed = NO;
-                        leftClickSentToGame = NO;
+                        // Only send GC release if we sent the press — never send an
+                        // unmatched release (e.g. after lock cleared leftClickSentToGame).
+                        if (leftClickSentToGame) { handler(button, value, pressed); leftClickSentToGame = NO; }
+                        else { leftClickSentToGame = NO; }
                     }
-                    handler(button, value, pressed);
                 } else {
-                    // ===== BUILD MODE (new right-click toggle behavior) =====
                     if (!cachedKeyWindow) {
                         UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
                         cachedKeyWindow = scene.keyWindow ?: scene.windows.firstObject;
                     }
-                    UIWindow *keyWindow = cachedKeyWindow;
-                    
-                    if (keyWindow) {
-                        // Only check UI position on button press, not release
+                    if (cachedKeyWindow) {
                         if (pressed) {
-                            // Prevent duplicate press events
-                            if (leftButtonIsPressed) {
-                                return; // Already pressed, ignore duplicate
-                            }
-                            
+                            if (leftButtonIsPressed) return;
                             leftButtonIsPressed = YES;
-                            
-                            // When right-click is held, always pass left-click as GameController
-                            // When right-click is released, left-click is always UITouch
-                            if (rightButtonIsPressed) {
-                                // Right-click held: left-click is GameController input
-                                handler(button, value, pressed);
-                                leftClickSentToGame = YES;
-                            } else {
-                                // Right-click released: left-click is always UITouch
-                                leftClickSentToGame = NO;
-                                // UITouch hook will handle it at red dot position
-                            }
+                            // Invalidate view cache on every new press — Fortnite UI can
+                            // change between presses so stale cache causes wrong touch type.
+                            lastCheckedView = nil;
+                            lastViewWasUIElement = NO;
+                            if (rightButtonIsPressed) { handler(button, value, pressed); leftClickSentToGame = YES; }
+                            else { leftClickSentToGame = NO; }
                         } else {
-                            // On release
-                            if (!leftButtonIsPressed) {
-                                return; // Not pressed, ignore stray release
-                            }
-                            
+                            if (!leftButtonIsPressed) return;
                             leftButtonIsPressed = NO;
-                            
-                            // CRITICAL: If we sent the press to the game handler, we MUST send the release
-                            // This prevents stuck buttons regardless of right-click state changes
-                            if (leftClickSentToGame) {
-                                handler(button, value, pressed);
-                                leftClickSentToGame = NO;
-                            }
+                            // Always send release if we sent a press — even if state changed
+                            // mid-hold (build mode toggle, window change). Prevents stuck clicks.
+                            if (leftClickSentToGame) { handler(button, value, pressed); leftClickSentToGame = NO; }
                         }
                     } else {
-                        // No window, pass through but still track state
-                        if (pressed) {
-                            leftButtonIsPressed = YES;
-                            leftClickSentToGame = YES;
-                        } else {
-                            leftButtonIsPressed = NO;
-                            if (leftClickSentToGame) {
-                                leftClickSentToGame = NO;
-                            }
-                        }
-                        handler(button, value, pressed);
+                        if (pressed) { leftButtonIsPressed = YES; leftClickSentToGame = YES; lastCheckedView = nil; lastViewWasUIElement = NO; }
+                        else         { leftButtonIsPressed = NO;  if (leftClickSentToGame) { handler(button, value, pressed); } leftClickSentToGame = NO; }
                     }
                 }
             } else {
-                // Mouse not locked - reset BUILD mode state
-                leftButtonIsPressed = NO;
-                leftClickSentToGame = NO;
+                leftButtonIsPressed = NO; leftClickSentToGame = NO;
             }
         };
 
-        %orig(customHandler);
-    } else if (isMiddleButton || isAuxButton1 || isAuxButton2) {
-        // Capture mouse button presses for remapping
-        GCControllerButtonValueChangedHandler customHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (pressed) {
-                // Determine which mouse button was pressed
-                int buttonCode = 0;
-                if (isMiddleButton) {
-                    buttonCode = MOUSE_BUTTON_MIDDLE;
-                } else if (isAuxButton1) {
-                    buttonCode = MOUSE_BUTTON_SIDE1;
-                } else if (isAuxButton2) {
-                    buttonCode = MOUSE_BUTTON_SIDE2;
-                }
-                
-                // If we're capturing for the popup, call the callback
-                if (mouseButtonCaptureCallback != nil && buttonCode != 0) {
-                    mouseButtonCaptureCallback(buttonCode);
-                    return; // Don't pass through when capturing
-                }
-                
-                // Pass through mouse buttons normally when mouse is locked
-                if (isMouseLocked) {
-                    handler(button, value, pressed);
-                }
-            } else {
-                // Button release - always pass through when mouse locked
-                if (isMouseLocked) {
-                    handler(button, value, pressed);
+    } else if (role == kRight) {
+        customHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
+            if (isBuildModeEnabled) {
+                if (pressed && !rightButtonIsPressed) {
+                    if (leftButtonIsPressed && !leftClickSentToGame) {
+                        UIApplication *app = [UIApplication sharedApplication];
+                        if ([app respondsToSelector:@selector(_cancelAllTouches)])
+                            [app performSelector:@selector(_cancelAllTouches)];
+                        leftClickSentToGame = YES;
+                        // Call the RAW handler directly — leftButtonGameHandler is the
+                        // wrapper and would re-enter with stale state, never reaching
+                        // the game. leftButtonRawHandler is the game's own handler.
+                        if (leftButtonRawHandler && leftButtonInput)
+                            leftButtonRawHandler(leftButtonInput, 1.0, YES);
+                    }
+                } else if (!pressed && rightButtonIsPressed) {
+                    // Right click released — if left is still physically held,
+                    // keep the GC left click active (don't cancel it).
+                    // leftClickSentToGame stays YES so release fires correctly later.
+                    // If left was NOT held, nothing to clean up.
                 }
             }
+            rightButtonIsPressed = pressed;
+            if (isMouseLocked) handler(button, value, pressed);
         };
 
-        %orig(customHandler);
     } else {
-        %orig;
+        // Middle or aux — figure out this button's code so we can check for remaps.
+        int buttonCode = MOUSE_BUTTON_MIDDLE;
+        for (GCMouse *mouse in GCMouse.mice) {
+            GCMouseInput *mi = mouse.mouseInput;
+            if (!mi) continue;
+            if (mi.middleButton == self) { buttonCode = MOUSE_BUTTON_MIDDLE; break; }
+            NSArray *aux = mi.auxiliaryButtons;
+            for (NSInteger i = 0; i < (NSInteger)aux.count; i++) {
+                if (aux[i] == self) { buttonCode = (int)(MOUSE_BUTTON_AUX_BASE + i); break; }
+            }
+        }
+        // Wrap Fortnite's handler: suppress it whenever a remap is assigned for this
+        // button, so only our valueChangedHandler fires (sending the remapped key).
+        int capturedCode = buttonCode;
+        GCControllerButtonValueChangedHandler suppressingHandler =
+            ^(GCControllerButtonInput *button, float value, BOOL pressed) {
+                // Suppress Fortnite's default action if either array has a binding — zero latency pure C
+                int idx = capturedCode - MOUSE_BUTTON_MIDDLE;
+                if (idx >= 0 && idx < MOUSE_REMAP_COUNT && mouseButtonRemapArray[idx] != 0) return;
+                handler(button, value, pressed);
+            };
+        %orig(suppressingHandler);
+        return;
     }
+
+    %orig(customHandler);
 }
 
 %end
@@ -774,6 +1030,11 @@ static void updateMouseLock(BOOL value) {
         %orig;
         return;
     }
+
+    // Store the raw handler and keyboard input so mouse buttons / scroll can
+    // synthesize keyboard key events without going through buttonForKeyCode.
+    storedKeyboardInput = self;
+    storedKeyboardHandler = handler;
     
     GCKeyboardValueChangedHandler customHandler = ^(GCKeyboardInput * _Nonnull keyboard, GCControllerButtonInput * _Nonnull key, GCKeyCode keyCode, BOOL pressed) {
         // PRIORITY: Key capture for popup (when adding/changing remappings)
@@ -782,21 +1043,25 @@ static void updateMouseLock(BOOL value) {
             return; // Don't pass key to game during capture
         }
 
-        // Left Option held+click = LOCK, Left Option tap alone = UNLOCK
+        // Left Option + Left Click = LOCK or UNLOCK. Bare tap does nothing.
         if (keyCode == TRIGGER_KEY) {
             if (isPopupVisible) return;
             if (pressed) {
+                // Cancel ALL active UI touches immediately before anything else —
+                // any Direct touch in flight must be cleared before isTriggerHeld
+                // changes the UITouch type, or the press is permanently orphaned.
+                UIApplication *app = [UIApplication sharedApplication];
+                if ([app respondsToSelector:@selector(_cancelAllTouches)])
+                    [app performSelector:@selector(_cancelAllTouches)];
+
                 isTriggerHeld = YES;
                 lockClickConsumed = NO;
                 unlockingWhileFiring = isMouseLocked; // already locked = unlock intent
             } else {
                 isTriggerHeld = NO;
                 unlockingWhileFiring = NO;
-                // Only toggle if no click was consumed as a lock gesture
-                if (!lockClickConsumed) {
-                    isMouseLocked = !isMouseLocked;
-                    updateMouseLock(isMouseLocked);
-                }
+                // Lock/unlock only happens via Left Option + Left Click (lockClickConsumed).
+                // A bare Left Option tap is intentionally ignored here.
                 lockClickConsumed = NO;
             }
             return;
@@ -921,8 +1186,10 @@ static void updateMouseLock(BOOL value) {
         return _original;
     }
 
-    // Suppress touch if this is a lock gesture (Option held while unlocked)
-    if (isTriggerHeld && !unlockingWhileFiring) {
+    // Suppress touch if this is a lock gesture (Option held while unlocked),
+    // BUT only if no left click is already in flight — if it is, we must let
+    // the touch complete with the same type it started with to avoid a stuck touch.
+    if (isTriggerHeld && !unlockingWhileFiring && !leftButtonIsPressed) {
         return _original;
     }
 

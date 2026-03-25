@@ -2,21 +2,22 @@
 
 > **Play Fortnite on Mac the way it was meant to be played.**
 
-FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on Apple Silicon Macs via Sideloadly**. It bridges the gap between touch-only iOS input and a full keyboard + mouse experience — giving you PC-accurate sensitivity, 120 FPS, proper mouse lock, and remappable controls, all without touching Fortnite's files.
+FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on Apple Silicon Macs**. It bridges the gap between touch-only iOS input and a full PC/Console experience by synthesizing high-performance hardware inputs for the game engine.
 
 ---
 
-## ✨ Features
+## ✨ Features (v4.0.0)
 
 | Feature | Description |
 |---|---|
-| 🖱️ **FPS Cursor Lock** | Lock/Unlock with **L⌥ + Left Click** for perfect FPS aiming. |
-| ⚡ **120 FPS** | Play at up to 120 FPS on supported ProMotion screens. |
-| 🎨 **High Graphics** | Unlock High and Epic graphics settings usually hidden on mobile. |
-| 🎯 **Zero-Lag Input** | Perfectly smooth mouse movement and instant responsiveness. |
-| 🏗️ **Build Mode** | Build and aim easily using a special draggable crosshair. |
-| 🎮 **Pro Controllers** | Use your favorite console controller with zero extra lag. |
-| 🗂️ **Live Settings** | Press `P` in-game to customize everything on the fly. |
+| 🎯 **Gyro-Mouse Proxy** | **New in v4.0.0.** Zero-latency, demand-driven mouse synthesis via CoreMotion hooks. The smoothest aiming experience available. |
+| 🎮 **Controller Mode** | **New in v4.0.0.** Full physical controller support (Xbox, PS5, etc.) with hardware remapping and **Advanced Virtual Controller Remaps**. |
+| 🖱️ **GCMouseInput Toggle** | **New in v4.0.0.** Instant cursor lock/unlock with a dedicated key bind (Default: `` ` ``). |
+| ⌨️ **Typing Mode** | **New in v4.0.0.** Press **Caps Lock** to instantly disable all keybinds and pass raw keyboard input to the game (for chat or searching). |
+| ⌨️ **Universal Remapping** | **New in v4.0.0.** Map any key or mouse button to any Fortnite action or controller button with ~2ns overhead. |
+| ⚡ **120 FPS & ProMotion** | Play at native high refresh rates on supported Apple Silicon displays. |
+| 🎨 **Graphics Unlocked** | Force High/Epic graphics settings and device spoofing for maximum fidelity. |
+| 🗂️ **Live Import/Export** | Customize everything in the `P` menu and export your entire setup to JSON for backup or sharing. |
 
 ---
 
@@ -24,83 +25,77 @@ FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on A
 
 ### Requirements
 - Apple Silicon Mac (M1 or later)
-- Fortnite iOS installed via **Sideloadly**
-- [Theos](https://theos.dev/docs/installation) (to build from source)
+- Fortnite iOS installed (via Sideloadly or similar injection method)
+- [Theos](https://theos.dev/docs/installation) (only if building from source)
 
-### Installation (Pre-built)
-Download the latest `.deb` from the [Releases](https://github.com/KohlerVG/FnMacTweak/releases/) page and install it through Sideloadly in Advanced Options > Tweak Injection.
+### Installation
+Download the latest `.deb` and inject it into your Fortnite IPA using Sideloadly (Advanced Options > Tweak Injection) or your preferred IPA patcher.
 
-> **Welcome screen:** A welcome popup appears on first launch. Press **"Don't Show Again"** to dismiss it permanently for that version. It automatically re-appears whenever you install a new version, so you never miss what's changed.
+> **Note:** A welcome popup appears on first launch. Press **"Don't Show Again"** to dismiss it. It will return automatically when you upgrade to a new version.
 
 ### Building from Source
 ```bash
-git clone https://github.com/KohlerVG/FnMacTweak.git
-cd FnMacTweak
 make package FINALPACKAGE=1
 ```
-Requires Theos to be installed and `$THEOS` set in your environment.
+The resulting `.deb` will be in the `packages/` directory.
 
 ---
 
-## 🖱️ Mouse Lock
+## ⌨️ Typing Mode (Caps Lock)
 
-Mouse locking uses a single deliberate gesture for both lock and unlock:
+**Typing Mode** is a first-class feature in v4.0.0 designed for quick communication. 
 
-| Action | Gesture |
-|---|---|
-| 🔒 **Lock** | Hold **L⌥** → **Left Click** |
-| 🔓 **Unlock** | Hold **L⌥** → **Left Click** |
-
-- Only the **first** left click per Option hold counts — extra clicks while Option is held are ignored.
-- The lock click is fully suppressed — it will **not** fire a shot, place a build, or interact with the UI.
-- Any active UI touches are cleared the moment Left Option is pressed, preventing stuck inputs.
-- The `P` key always force-unlocks the mouse when opening the settings panel.
+- **How it works**: Press **Caps Lock** at any time to toggle Typing Mode.
+- **When ON**: All custom keybinds and controller remappings are temporarily disabled. Your keyboard behaves like a standard keyboard, passing raw characters to the game.
+- **Visual Feedback**: Syncs with your keyboard's hardware Caps Lock light.
+- **Safety**: Caps Lock cannot be assigned to any other action in the settings menu, ensuring it is always available for typing.
 
 ---
 
-## 🎯 Sensitivity System
+## 🎯 The Gyro-Mouse System
 
-FnMacTweak replicates the **exact nested sensitivity formula** used by PC Fortnite:
+In v4.0.0, FnMacTweak moved away from traditional delta accumulation in favor of a **Demand-Driven Gyro Proxy**. 
 
-```
-effective = (Base ÷ 100) × (Look% ÷ 100) × Scale
-```
+Standard mouse input in iOS wrappers often suffers from jitter or "staircasing". FnMacTweak bypasses this by hooking the game's CoreMotion rotation requests and injecting synthesized velocity data precisely when the engine asks for it.
 
-| Setting | Default | What it does |
+- **Sensitivity Formula:** `(Base ÷ 100) × (Look% ÷ 100) × Scale × (Gyro Multiplier ÷ 100)`
+- **Pixel Perfection:** Sub-pixel mouse deltas are preserved and consumed at the game's polling rate.
+- **Scaling:** Match your exact PC DPI/Sensitivity feel using the `MACOS_TO_PC_SCALE` and `Gyro Multiplier` settings in the `P` menu.
+
+---
+
+## 🎮 Controller Mode & Virtual Remaps
+
+FnMacTweak provides two powerful ways to use a controller:
+
+1. **Hardware Mapping**: Map your physical controller's buttons to other controller inputs.
+2. **Advanced Virtual Remaps**: Map Keyboard keys or Mouse buttons directly to Controller inputs. This allows you to "spoof" a controller while using KBM, which can be useful for specific game configurations or accessibility.
+
+Both systems operate with instant, immediate saving — no "Apply" step required for controller changes.
+
+---
+
+## ⌨️ Input Customization
+
+Press **`P`** (default) in-game to open the settings panel.
+
+- **Sensitivity Tab**: Adjust mouse look speed, gyro multipliers, and the GCMouseInput Toggle key.
+- **Keyboard Tab**: Traditional keyboard-to-game mappings (Movement, Building, etc.).
+- **Controller Tab**: Manage physical controller mappings and virtual controller overrides.
+- **Advanced Tab**: Manage global Import/Export and experimental features.
+
+---
+
+## 🖱️ Cursor Management
+
+| Action | Mapping | Description |
 |---|---|---|
-| `BASE_XY_SENSITIVITY` | 6.4 | Matches Fortnite's X/Y-Axis base sensitivity |
-| `LOOK_SENSITIVITY_X/Y` | 50% | Hip-fire horizontal / vertical |
-| `SCOPE_SENSITIVITY_X/Y` | 50% | ADS horizontal / vertical |
-| `MACOS_TO_PC_SCALE` | 20.0 | Converts macOS mouse delta to PC units |
+| 🔒 **Toggle Lock/Unlock** | Press **L** | Toggles between FPS mouse look and free cursor. |
+| 🎯 **Teleport to Blue Dot** | Hold **Option (⌥)** | Temporarily unlocks and warps the cursor to the "Blue Dot" center (for building/menus). Releasing Option relocks the mouse and warps it back to the center of the screen. |
 
-Sensitivities are **pre-calculated once at startup** and cached — no per-frame math overhead. Sub-pixel movements are accumulated and never lost.
-
-Press `P` in-game → **Sensitivity** tab to adjust these live.
-
----
-
-## ⌨️ Key Remapping
-
-Two independent remapping layers stack on top of each other:
-
-1. **Fortnite Keybinds** — Remaps game actions (Forward, Reload, Build…) to your preferred keys.
-2. **Advanced Custom Remaps** — Raw key-to-key overrides that take priority over everything else.
-
-Both layers use **direct array lookups** (indexed by `GCKeyCode`) for ~2ns overhead per keypress — effectively zero latency.
-
-Press `P` → **Key Remap** tab to configure.
-
----
-
-## 🏗️ Build Mode
-
-Build Mode lets you use mouse clicks to build and edit just like on PC:
-
-- **Right-Click (Hold)**: Aim down sights normally.
-- **Left-Click**: Places builds or selects edits wherever the **Red Dot Crosshair** is placed.
-- **Draggable Crosshair**: Open the `P` settings panel while Build Mode is on — the red dot appears on screen. Drag it to align with your crosshair. Position is saved automatically.
-
-Toggle Build Mode in the **P** menu → **Build Mode** tab.
+- **Blue Dot Position**: When usage of the `P` setup panel is active, a blue dot circle indicator appears. Drag it to your desired position to set the "Blue Dot" teleport target.
+- The **GCMouseInput Toggle** (default: `` ` ``) is a separate dedicated key for direct in-game action passthrough.
+- The settings panel automatically releases the mouse cursor when opened.
 
 ---
 
@@ -109,56 +104,25 @@ Toggle Build Mode in the **P** menu → **Build Mode** tab.
 ```
 FnMacTweak/
 ├── src/
-│   ├── Tweak.xm                   # Entry point: all %hook patches + constructor
-│   ├── globals.h                  # Shared constants, extern declarations, inline helpers
-│   ├── globals.m                  # Global variable definitions + utility functions
-│   └── views/
-│       ├── popupViewController.h  # Settings popup public interface + tab enum
-│       ├── popupViewController.m  # Full settings UI (sensitivity, keybinds, build mode, container, quick start)
-│       ├── welcomeViewController.h # Welcome screen public interface
-│       └── welcomeViewController.m # First-launch welcome screen (shown once per version)
-├── lib/
-│   └── fishhook.{h,c}             # Facebook's fishhook — used for sysctl device spoofing
-├── Makefile                       # Theos build config
-├── control                        # Debian package metadata (single source of truth for version)
-└── FnMacTweak.plist               # Theos injection filter (targets Fortnite bundle)
+│   ├── Tweak.xm           # Hook entry point (CGEventTap & HID lifecycle)
+│   ├── globals.h/m        # Global state, persistence, and suite management
+│   ├── ue_reflection.h/m  # CoreMotion / Gyro-Mouse synthesis logic
+│   ├── FnOverlayWindow.h/m# Custom overlay for Blue Dot & UI rendering
+│   └── views/             # UI Components (Settings Popup, Welcome Screen)
+├── Makefile               # Build configuration (Theos)
+└── control                # Package metadata
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Here's how to get oriented:
-
-- **`Tweak.xm`** is where all the Theos `%hook` patches live. If you're changing how input is intercepted or adding a new game hook, start here.
-- **`globals.h/.m`** holds all shared state. Add new settings constants here and declare them `extern` so every file can access them.
-- **`popupViewController.m`** is the settings UI. Each tab is a self-contained `UIView` built in code — no Xib/Storyboard.
-- **`welcomeViewController.m`** handles the first-launch welcome popup — shown once per version install.
-
-When submitting a PR, please:
-1. Keep hooks focused — one concern per `%hook` block.
-2. Update `CHANGELOG.md` with a short description of your change.
-3. Test with both Zero Build and Build Mode enabled.
-
----
-
-## 📋 Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for a full version history and technical breakdown of every change.
 
 ---
 
 ## 🏆 Credits
 
-- **[@kohlervg](https://github.com/KohlerVG)** — Project Overhaul: Re-engineered the sensitivity system, keymapping, build mode, import/export, zero-lag optimizations, cursor lock system, and custom PiP.
-- **[@rt2746](https://github.com/rt2746)** — Original Author: Creator of the initial [FnMacTweak](https://github.com/rt-someone/FnMacTweak) repository.
-- **[Facebook fishhook](https://github.com/facebook/fishhook)** — Used for `sysctl` hooking in a jailed environment.
-- **[PlayCover / PlayTools](https://github.com/PlayCover/PlayTools)** — Inspiration for device model spoofing.
+- **[@kohlervg](https://github.com/KohlerVG)** — v4.0.0 Architect: Gyro-Mouse Proxy, Controller Mode, UI Overhaul.
+- **[@rt2746](https://github.com/rt2746)** — Original Author.
+- **[Majkel]** — Special thanks for the virtual controller implementation idea!
 
 ---
 
 ## ⚖️ License
 
-See [LICENSE](LICENSE) for details.
-
-> **Disclaimer:** This project is not affiliated with or endorsed by Epic Games. Use at your own risk.
+See [LICENSE](LICENSE) for details. Use at your own risk.

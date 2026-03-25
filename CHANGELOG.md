@@ -3,6 +3,32 @@
 All notable changes to FnMacTweak are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [4.0.0] — March 2026
+
+### ✨ Added
+- **Typing Mode (Caps Lock)** — Press **Caps Lock** to toggle raw keyboard input. Disables all tweak-specific keybinds and passes raw characters to the game. Syncs with the keyboard's hardware light.
+- **Gyro-Mouse Proxy** — Zero-latency, demand-driven mouse synthesis via CoreMotion hooks for the smoothest aiming experience.
+- **Controller Mode** — Full physical controller support (Xbox, PS5, etc.) with hardware remapping.
+- **Advanced Virtual Controller Remaps** — Map any Keyboard/Mouse input directly to a Controller button button (e.g., Space to Jump).
+- **GCMouseInput Toggle** — Dedicated key (default: `` ` ``) for instant cursor lock/unlock and passthrough.
+- **Settings Import/Export** — Fully robust JSON backup/restore for all settings, including Controller and Virtual remaps.
+- **Welcome UI Improvements** — Added Typing Mode info card and refined border aesthetics to match the main settings pane.
+
+### 🔄 Changed
+- **Cursor Management** — Updated to modern standards: **L** key to toggle lock/unlock, **Option (⌥)** to temporarily warp cursor to the Blue Dot.
+- **Blue Dot System** — Draggable crosshair target for rapid cursor teleports during building or menu navigation.
+- **Project Structure** — Organized `src/` directory with clear separation between Tweak hooks, Gyro synthesis, and UI views.
+
+### 🗑️ Removed
+- **Obsolete "Build Mode"** — Legacy build mode and zero-build logic/comments have been purged.
+- **Obsolete "Red Dot"** — Removed in favor of the more flexible Blue Dot crosshair system.
+
+### 🐛 Fixed
+- **Settings Persistence** — Corrected `NSUserDefaults` suite management for controller settings, ensuring they persist and export correctly.
+- **Rebind Dialog Interference** — Implemented a "1-click pass through" workaround for all capture prompts, preventing accidental bindings when clicking UI buttons.
+- **Backtick (`) Key Support** — Fully unified keycode 53 (Backtick) across the UI, reset logic, and migration paths.
+- **Controller Latency** — Optimized input synthesis to zero-latency element-based handling.
+
 ## [3.0.0] — March 2026
 
 ### ✨ Added

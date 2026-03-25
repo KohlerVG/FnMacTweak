@@ -8,8 +8,8 @@
 //
 //    Sensitivity  — Adjust PC-formula sensitivity values
 //    Key Remap    — Assign Fortnite action keybinds + advanced custom remaps
-//    Build Mode   — Toggle build mode and manage the red dot crosshair
-//    Container    — Grant access to the Fortnite data folder
+//    Controller   — Physical hardware and virtual controller remapping
+//    Container    — Grant access to the Fortnite data folder + Import/Export
 //    Quick Start  — In-app tutorial video with liquid glass player
 //
 //  CONTRIBUTING: Add new tabs by:
@@ -26,7 +26,7 @@
 typedef NS_ENUM(NSInteger, PopupTab) {
     PopupTabSensitivity = 0,   // Sensitivity sliders / input fields
     PopupTabKeyRemap    = 1,   // Keybind assignment (Fortnite actions + custom remaps)
-    PopupTabBuildMode   = 2,   // Build Mode toggle and red dot configuration
+    PopupTabController  = 2,   // Virtual controller mapping
     PopupTabContainer   = 3,   // Data folder access + settings import/export
     PopupTabQuickStart  = 4,   // Tutorial video popup
 };
@@ -38,16 +38,16 @@ typedef NS_ENUM(NSInteger, PopupTab) {
 // All layout is done in code (no Storyboards or Xibs).
 @property (nonatomic, strong) UIView *sensitivityTab;
 @property (nonatomic, strong) UIView *keyRemapTab;
-@property (nonatomic, strong) UIView *buildModeTab;
 @property (nonatomic, strong) UIView *containerTab;
 @property (nonatomic, strong) UIView *quickStartTab;
+@property (nonatomic, strong) UIView *controllerTab;
 
 // ── Tab bar buttons ───────────────────────────────────────────────────────────
 @property (nonatomic, strong) UIButton *sensitivityTabButton;
 @property (nonatomic, strong) UIButton *keyRemapTabButton;
-@property (nonatomic, strong) UIButton *buildModeTabButton;
 @property (nonatomic, strong) UIButton *containerTabButton;
 @property (nonatomic, strong) UIButton *quickStartTabButton;
+@property (nonatomic, strong) UIButton *controllerTabButton;
 
 // Sliding indicator beneath the active tab button
 @property (nonatomic, strong) UIView *tabIndicator;
@@ -66,6 +66,10 @@ typedef NS_ENUM(NSInteger, PopupTab) {
 // ── Action buttons (Key Remap tab) ────────────────────────────────────────────
 @property (nonatomic, strong) UIButton *applyChangesButton;      // Commits staged keybinds
 @property (nonatomic, strong) UIButton *discardKeybindsButton;   // Discards staged keybinds
+@property (nonatomic, strong) UIButton *applyControllerButton;   // Controller mode toggle / Apply
+@property (nonatomic, strong) UIButton *discardControllerButton; // Discard staged controller changes
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *stagedControllerMappings;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *stagedVCtrlRemappings;
 
 // ── Action buttons (Sensitivity tab) ─────────────────────────────────────────
 @property (nonatomic, strong) UIButton *discardSensitivityButton;
@@ -79,5 +83,10 @@ typedef NS_ENUM(NSInteger, PopupTab) {
  * "Continue" button is tapped, landing new users on the tutorial.
  */
 - (void)switchToQuickStartTab;
+
+/**
+ * Switches the panel to the Controller tab.
+ */
+- (void)switchToControllerTab;
 
 @end

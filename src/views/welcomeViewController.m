@@ -44,12 +44,12 @@
     CGFloat contentW = w - pad * 2;
     CGFloat y = 0;
 
-    // ── Title bar ────────────────────────────────────────────────
-    UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 44)];
+    // ── Title bar (40px, matches P pane) ───────────────────────
+    UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 40)];
     titleBar.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.15];
     [self.view addSubview:titleBar];
 
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, w, 44)];
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, w, 40)];
     titleLabel.text = @"Welcome to FnMacTweak";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
@@ -60,21 +60,21 @@
     CGFloat pillW = 44.0;
     CGFloat pillH = 16.0;
     CGFloat pillX = w - 12.0 - pillW;
-    CGFloat pillY = (44.0 - pillH) / 2.0;
+    CGFloat pillY = (40.0 - pillH) / 2.0;
     UIView *versionPill = [[UIView alloc] initWithFrame:CGRectMake(pillX, pillY, pillW, pillH)];
     versionPill.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1.0];
     versionPill.layer.cornerRadius = pillH / 2.0;
     versionPill.layer.borderWidth = 0.5;
     versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
     UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
-    versionLabel.text = @"v3.0.0";
+    versionLabel.text = @"v4.0.0";
     versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
     versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
     versionLabel.textAlignment = NSTextAlignmentCenter;
     [versionPill addSubview:versionLabel];
     [titleBar addSubview:versionPill];
 
-    y = 44 + 20;
+    y = 40 + 20;
 
     // ── Logo / icon row ──────────────────────────────────────────
     UILabel *iconLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, y, w, 48)];
@@ -86,7 +86,7 @@
 
     // ── Description ──────────────────────────────────────────────
     UILabel *descLabel = [[UILabel alloc] init];
-    descLabel.text = @"FnMacTweak lets you play Fortnite iOS on macOS with full mouse & keyboard support — including sensitivity tuning, key remapping, and build mode.";
+    descLabel.text = @"FnMacTweak lets you play Fortnite iOS on macOS with full mouse & keyboard support — including sensitivity tuning, key remapping, and controller mode.";
     descLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
     descLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
     descLabel.textAlignment = NSTextAlignmentCenter;
@@ -97,127 +97,140 @@
     y += descSize.height + 18;
 
     // ── Divider ──────────────────────────────────────────────────
-    UIView *divider = [[UIView alloc] initWithFrame:CGRectMake(pad, y, contentW, 0.5)];
-    divider.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.6];
+    UIView *divider = [[UIView alloc] initWithFrame:CGRectMake(pad, y, contentW, 1.0)];
+    divider.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.5];
     [self.view addSubview:divider];
-    y += 0.5 + 16;
+    y += 1.0 + 16;
+    
+    // Layout constants for grids
+    CGFloat gutter  = 8.0;
+    CGFloat cellW   = (contentW - gutter) / 2.0;
+    CGFloat cellPad = 10.0;
+    CGFloat badgeH  = 26.0;
+    CGFloat innerCW = cellW - cellPad * 2;
+    
+    // ── Typing Mode (Caps Lock) ──────────────────────────────────
+    CGFloat typingModeCellH = 72.0;
+    UIView *typingModeCell = [[UIView alloc] initWithFrame:CGRectMake(pad, y, contentW, typingModeCellH)];
+    typingModeCell.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
+    typingModeCell.layer.cornerRadius = 8;
+    typingModeCell.layer.borderWidth = 0.5;
+    typingModeCell.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
+    [self.view addSubview:typingModeCell];
+    
+    UILabel *typingTitle = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, 10, contentW - cellPad*2, 16)];
+    typingTitle.text = @"Typing Mode (Raw Input)";
+    typingTitle.textColor = [UIColor whiteColor];
+    typingTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [typingModeCell addSubview:typingTitle];
+    
+    UILabel *capsBadge = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, 34, 74, 26)];
+    capsBadge.text = @"Caps Lock";
+    capsBadge.textColor = [UIColor whiteColor];
+    capsBadge.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    capsBadge.textAlignment = NSTextAlignmentCenter;
+    capsBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
+    capsBadge.layer.cornerRadius = 5;
+    capsBadge.layer.borderWidth = 0.5;
+    capsBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
+    capsBadge.layer.masksToBounds = YES;
+    [typingModeCell addSubview:capsBadge];
+    
+    UILabel *typingDesc = [[UILabel alloc] initWithFrame:CGRectMake(cellPad + 82, 30, contentW - (cellPad + 82) - cellPad, 36)];
+    typingDesc.text = @"Toggles raw keyboard input. Syncs with your keyboard's light.";
+    typingDesc.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
+    typingDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    typingDesc.numberOfLines = 2;
+    [typingModeCell addSubview:typingDesc];
+    
+    y += typingModeCellH + 12;
 
-    // ── "Opening Settings" hint box ──────────────────────────────
-    UIView *hintBox = [[UIView alloc] init];
-    hintBox.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
-    hintBox.layer.cornerRadius = 8;
-    hintBox.layer.borderWidth = 0.5;
-    hintBox.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.4].CGColor;
+    // ── 2-COLUMN GRID: "Opening Settings" | "Lock / Unlock Cursor" ──
 
-    UILabel *hintTitle = [[UILabel alloc] init];
-    hintTitle.text = @"Opening Settings";
-    hintTitle.textColor = [UIColor whiteColor];
-    hintTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    // Measure desc text so both cells share equal height
+    UILabel *tmpP = [[UILabel alloc] init];
+    tmpP.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    tmpP.numberOfLines = 0;
+    tmpP.text = @"Press P to open the settings pane.";
+    CGFloat pDescH = [tmpP sizeThatFits:CGSizeMake(innerCW, CGFLOAT_MAX)].height;
 
-    UILabel *hintBody = [[UILabel alloc] init];
-    hintBody.text = @"Press  P  at any time while in-game to open the FnMacTweak settings pane.";
-    hintBody.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
-    hintBody.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-    hintBody.numberOfLines = 0;
+    UILabel *tmpL = [[UILabel alloc] init];
+    tmpL.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    tmpL.numberOfLines = 0;
+    tmpL.text = @"Press L to lock or unlock the cursor.";
+    CGFloat lDescH = [tmpL sizeThatFits:CGSizeMake(innerCW, CGFLOAT_MAX)].height;
 
-    UILabel *keyBadge = [[UILabel alloc] init];
-    keyBadge.text = @"P";
-    keyBadge.textColor = [UIColor whiteColor];
-    keyBadge.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-    keyBadge.textAlignment = NSTextAlignmentCenter;
-    keyBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    keyBadge.layer.cornerRadius = 5;
-    keyBadge.layer.borderWidth = 0.5;
-    keyBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    keyBadge.layer.masksToBounds = YES;
+    CGFloat titleH = 16.0;
+    CGFloat descH  = MAX(pDescH, lDescH);
+    CGFloat cellH  = cellPad + titleH + 8 + badgeH + 8 + descH + cellPad;
 
-    CGFloat hintInner = contentW - 24;
-    CGSize hintTitleSize = [hintTitle sizeThatFits:CGSizeMake(hintInner, 20)];
-    CGSize hintBodySize = [hintBody sizeThatFits:CGSizeMake(hintInner, CGFLOAT_MAX)];
-    CGFloat badgeSize = 28;
-    CGFloat hintBoxH = 12 + hintTitleSize.height + 6 + badgeSize + 6 + hintBodySize.height + 12;
+    // ── Left cell: Opening Settings ──────────────────────────────
+    UIView *openCell = [[UIView alloc] initWithFrame:CGRectMake(pad, y, cellW, cellH)];
+    openCell.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
+    openCell.layer.cornerRadius = 8;
+    openCell.layer.borderWidth = 0.5;
+    openCell.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
+    [self.view addSubview:openCell];
 
-    hintBox.frame = CGRectMake(pad, y, contentW, hintBoxH);
-    hintTitle.frame = CGRectMake(12, 12, hintInner, hintTitleSize.height);
-    keyBadge.frame = CGRectMake(12, 12 + hintTitleSize.height + 6, badgeSize, badgeSize);
-    hintBody.frame = CGRectMake(12, 12 + hintTitleSize.height + 6 + badgeSize + 6, hintInner, hintBodySize.height);
+    UILabel *openTitle = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad, innerCW, titleH)];
+    openTitle.text = @"Opening Settings";
+    openTitle.textColor = [UIColor whiteColor];
+    openTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [openCell addSubview:openTitle];
 
-    [hintBox addSubview:hintTitle];
-    [hintBox addSubview:keyBadge];
-    [hintBox addSubview:hintBody];
-    [self.view addSubview:hintBox];
-    y += hintBoxH + 10;
+    UILabel *pBadge = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad + titleH + 8, 28, badgeH)];
+    pBadge.text = @"P";
+    pBadge.textColor = [UIColor whiteColor];
+    pBadge.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    pBadge.textAlignment = NSTextAlignmentCenter;
+    pBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
+    pBadge.layer.cornerRadius = 5;
+    pBadge.layer.borderWidth = 0.5;
+    pBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
+    pBadge.layer.masksToBounds = YES;
+    [openCell addSubview:pBadge];
 
-    // ── "Lock / Unlock Cursor" — single full-width card ─────────
-    UIView *lockUnlockBox = [[UIView alloc] init];
-    lockUnlockBox.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.9];
-    lockUnlockBox.layer.cornerRadius = 8;
-    lockUnlockBox.layer.borderWidth = 0.5;
-    lockUnlockBox.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:0.4].CGColor;
+    UILabel *openDesc = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad + titleH + 8 + badgeH + 8, innerCW, descH)];
+    openDesc.text = @"Press P to open the settings pane.";
+    openDesc.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
+    openDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    openDesc.numberOfLines = 0;
+    [openCell addSubview:openDesc];
 
-    UILabel *lockUnlockTitle = [[UILabel alloc] init];
-    lockUnlockTitle.text = @"Lock / Unlock Cursor";
-    lockUnlockTitle.textColor = [UIColor whiteColor];
-    lockUnlockTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    // ── Right cell: Lock / Unlock Cursor ─────────────────────────
+    UIView *lockCell = [[UIView alloc] initWithFrame:CGRectMake(pad + cellW + gutter, y, cellW, cellH)];
+    lockCell.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.6];
+    lockCell.layer.cornerRadius = 8;
+    lockCell.layer.borderWidth = 0.5;
+    lockCell.layer.borderColor = [UIColor colorWithWhite:0.25 alpha:0.4].CGColor;
+    [self.view addSubview:lockCell];
 
-    UILabel *luBadge1 = [[UILabel alloc] init];
-    luBadge1.text = @"L⌥";
-    luBadge1.textColor = [UIColor whiteColor];
-    luBadge1.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    luBadge1.textAlignment = NSTextAlignmentCenter;
-    luBadge1.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    luBadge1.layer.cornerRadius = 5;
-    luBadge1.layer.borderWidth = 0.5;
-    luBadge1.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    luBadge1.layer.masksToBounds = YES;
+    UILabel *lockTitle = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad, innerCW, titleH)];
+    lockTitle.text = @"Lock / Unlock Cursor";
+    lockTitle.textColor = [UIColor whiteColor];
+    lockTitle.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+    [lockCell addSubview:lockTitle];
 
-    UILabel *luPlus = [[UILabel alloc] init];
-    luPlus.text = @"+";
-    luPlus.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
-    luPlus.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    luPlus.textAlignment = NSTextAlignmentCenter;
+    UILabel *lBadge = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad + titleH + 8, 28, badgeH)];
+    lBadge.text = @"L";
+    lBadge.textColor = [UIColor whiteColor];
+    lBadge.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    lBadge.textAlignment = NSTextAlignmentCenter;
+    lBadge.backgroundColor = [UIColor colorWithWhite:0.28 alpha:0.9];
+    lBadge.layer.cornerRadius = 5;
+    lBadge.layer.borderWidth = 0.5;
+    lBadge.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:0.6].CGColor;
+    lBadge.layer.masksToBounds = YES;
+    [lockCell addSubview:lBadge];
 
-    UILabel *luBadge2 = [[UILabel alloc] init];
-    luBadge2.text = @"Click";
-    luBadge2.textColor = [UIColor whiteColor];
-    luBadge2.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    luBadge2.textAlignment = NSTextAlignmentCenter;
-    luBadge2.backgroundColor = [UIColor colorWithWhite:0.28 alpha:1.0];
-    luBadge2.layer.cornerRadius = 5;
-    luBadge2.layer.borderWidth = 0.5;
-    luBadge2.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
-    luBadge2.layer.masksToBounds = YES;
+    UILabel *lockDesc = [[UILabel alloc] initWithFrame:CGRectMake(cellPad, cellPad + titleH + 8 + badgeH + 8, innerCW, descH)];
+    lockDesc.text = @"Press L to lock or unlock the cursor.";
+    lockDesc.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
+    lockDesc.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
+    lockDesc.numberOfLines = 0;
+    [lockCell addSubview:lockDesc];
 
-    UILabel *lockUnlockBody = [[UILabel alloc] init];
-    lockUnlockBody.text = @"Hold Left Option and click to lock or unlock your mouse cursor to the game window.";
-    lockUnlockBody.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
-    lockUnlockBody.font = [UIFont systemFontOfSize:11 weight:UIFontWeightRegular];
-    lockUnlockBody.numberOfLines = 0;
-
-    CGFloat innerW  = contentW - 24;
-    CGFloat badgeH  = 28;
-    CGFloat badge1W = 34, plusW = 14, badge2W = 42;
-
-    CGSize titleSz = [lockUnlockTitle sizeThatFits:CGSizeMake(innerW, 20)];
-    CGSize bodySz  = [lockUnlockBody  sizeThatFits:CGSizeMake(innerW, CGFLOAT_MAX)];
-    CGFloat boxH   = 12 + titleSz.height + 6 + badgeH + 6 + bodySz.height + 12;
-
-    lockUnlockBox.frame   = CGRectMake(pad, y, contentW, boxH);
-    lockUnlockTitle.frame = CGRectMake(12, 12, innerW, titleSz.height);
-    CGFloat badgeTop      = 12 + titleSz.height + 6;
-    luBadge1.frame = CGRectMake(12,                           badgeTop, badge1W, badgeH);
-    luPlus.frame   = CGRectMake(12 + badge1W + 3,             badgeTop, plusW,   badgeH);
-    luBadge2.frame = CGRectMake(12 + badge1W + 3 + plusW + 3, badgeTop, badge2W, badgeH);
-    lockUnlockBody.frame  = CGRectMake(12, badgeTop + badgeH + 6, innerW, bodySz.height);
-
-    [lockUnlockBox addSubview:lockUnlockTitle];
-    [lockUnlockBox addSubview:luBadge1];
-    [lockUnlockBox addSubview:luPlus];
-    [lockUnlockBox addSubview:luBadge2];
-    [lockUnlockBox addSubview:lockUnlockBody];
-    [self.view addSubview:lockUnlockBox];
-
-    y += boxH + 22;
+    y += cellH + 22;
 
     // ── Buttons ──────────────────────────────────────────────────
     CGFloat btnH = 36;

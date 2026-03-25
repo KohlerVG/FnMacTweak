@@ -6,8 +6,8 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = FnMacTweak
 
-FnMacTweak_FILES = ./src/Tweak.xm ./src/FnOverlayWindow.m ./src/views/popupViewController.m ./src/views/welcomeViewController.m ./src/globals.m ./lib/fishhook.c
-FnMacTweak_FRAMEWORKS = UIKit WebKit
+FnMacTweak_FILES = ./src/Tweak.xm ./src/FnOverlayWindow.m ./src/views/popupViewController.m ./src/views/welcomeViewController.m ./src/globals.m ./lib/fishhook.c ./src/ue_reflection.m
+FnMacTweak_FRAMEWORKS = UIKit WebKit CoreGraphics GameController QuartzCore
 FnMacTweak_CFLAGS = -fobjc-arc -O3
 
 DEBUG = 0

@@ -754,6 +754,35 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed) {
 // ── Mapping Helpers ──────────────────────────────────────────────────────────
 // (Obsolete functions removed — logic moved to caller loops for multi-bind support)
 
+// --------- macOS 26.4 CRASH FIX ---------
+// Fortnite v40.00.1 has a Swift @available(iOS 17.4, *) check that, on
+// macOS 26.4 via Catalyst, takes a code path with a NULL async continuation
+// causing an immediate SIGSEGV on launch.  Hook _availability_version_check
+// (via fishhook / GOT patching — data pages only, no code-signing issues)
+// so the check returns false for iOS 17.4, forcing the safe fallback path.
+
+typedef struct {
+    uint32_t platform;
+    uint32_t version;       /* major<<16 | minor<<8 | patch */
+} dyld_build_version_t;
+
+#define PLATFORM_IOS       2
+#define PACK_VER(M,m,p)    (((uint32_t)(M)<<16)|((uint32_t)(m)<<8)|(uint32_t)(p))
+#define BLOCKED_VERSION    PACK_VER(17, 4, 0)
+
+static bool (*orig_availability_version_check)(uint32_t, dyld_build_version_t []);
+
+static bool hooked_availability_version_check(uint32_t count,
+                                               dyld_build_version_t versions[]) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (versions[i].platform == PLATFORM_IOS &&
+            versions[i].version  == BLOCKED_VERSION) {
+            return false;
+        }
+    }
+    return orig_availability_version_check(count, versions);
+}
+
 // --------- DEVICE SPOOFING ---------
 // Intercepts sysctl/sysctlbyname to report DEVICE_MODEL and OEM_ID,
 // making Fortnite treat this Mac as a supported iOS device.
@@ -854,12 +883,13 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     // Initialize Gyro-Mouse Proxy hooks
     ue_init_gyro_hooks();
 
-    // Fishhook for device spoofing
+    // Fishhook for device spoofing + macOS 26.4 crash fix
     struct rebinding rebindings[] = {
         {"sysctl", (void *)pt_sysctl, (void **)&orig_sysctl},
-        {"sysctlbyname", (void *)pt_sysctlbyname, (void **)&orig_sysctlbyname}
+        {"sysctlbyname", (void *)pt_sysctlbyname, (void **)&orig_sysctlbyname},
+        {"_availability_version_check", (void *)hooked_availability_version_check, (void **)&orig_availability_version_check}
     };
-    rebind_symbols(rebindings, 2);
+    rebind_symbols(rebindings, 3);
 
     NSString* currentVersion = @"4.0.0";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];

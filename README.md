@@ -6,17 +6,21 @@ FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on A
 
 ---
 
-## ✨ Features (v4.0.0)
+## ✨ Features (v5.0.0)
 
 | Feature | Description |
 |---|---|
-| 🎯 **Gyro-Mouse Proxy** | **New in v4.0.0.** Zero-latency, demand-driven mouse synthesis via CoreMotion hooks. The smoothest aiming experience available. |
-| 🎮 **Controller Mode** | **New in v4.0.0.** Full physical controller support (Xbox, PS5, etc.) with hardware remapping and **Advanced Virtual Controller Remaps**. |
-| 🖱️ **GCMouseInput Toggle** | **New in v4.0.0.** Instant cursor lock/unlock with a dedicated key bind (Default: `` ` ``). |
-| ⌨️ **Typing Mode** | **New in v4.0.0.** Press **Caps Lock** to instantly disable all keybinds and pass raw keyboard input to the game (for chat or searching). |
-| ⌨️ **Universal Remapping** | **New in v4.0.0.** Map any key or mouse button to any Fortnite action or controller button with ~2ns overhead. |
-| ⚡ **120 FPS & ProMotion** | Play at native high refresh rates on supported Apple Silicon displays. |
-| 🎨 **Graphics Unlocked** | Force High/Epic graphics settings and device spoofing for maximum fidelity. |
+| 🖱️ **Raw HID Mouse Pipeline** | **New in v5.0.0.** Mouse input is read directly from hardware at your mouse's native polling rate, bypassing the OS event system entirely for the lowest possible latency. |
+| 🎯 **Engine-Level Aim Hook** | **New in v5.0.0.** Camera aiming is injected directly into Unreal Engine's internal orientation function, with a sub-millisecond trajectory correction to compensate for OS input latency. |
+| ⚡ **Auto 120 FPS** | **New in v5.0.0.** Automatically corrects `GameUserSettings.ini` to enforce 120 FPS every time Fortnite rewrites the file. No more manual ini edits. |
+| 🛡️ **Stealth Suite** | **New in v5.0.0.** Full dyld image hiding, sysctl virtualization, and process introspection protection. |
+| 🌍 **EU Marketplace Support** | **New in v5.0.0.** Bypasses Epic's EU marketplace eligibility checks. |
+| 🎯 **Gyro-Mouse Proxy** | Zero-latency, demand-driven mouse synthesis via CoreMotion hooks. The smoothest aiming experience available. |
+| 🎮 **Controller Mode** | Full physical controller support (Xbox, PS5, etc.) with hardware remapping, **Advanced Virtual Controller Remaps**, and sensible default bindings out of the box. |
+| 🖱️ **GCMouseInput Toggle** | Instant cursor lock/unlock with a dedicated key bind (Default: `` ` ``). |
+| ⌨️ **Typing Mode** | Press **Caps Lock** to instantly disable all keybinds and pass raw keyboard input to the game (for chat or searching). |
+| ⌨️ **Universal Remapping** | Map any key or mouse button to any Fortnite action or controller button with near-zero overhead. |
+| 🎨 **Graphics Unlocked** | Device spoofing for maximum graphics fidelity. |
 | 🗂️ **Live Import/Export** | Customize everything in the `P` menu and export your entire setup to JSON for backup or sharing. |
 
 ---
@@ -43,7 +47,7 @@ The resulting `.deb` will be in the `packages/` directory.
 
 ## ⌨️ Typing Mode (Caps Lock)
 
-**Typing Mode** is a first-class feature in v4.0.0 designed for quick communication. 
+**Typing Mode** is designed for quick in-game communication without disrupting your setup.
 
 - **How it works**: Press **Caps Lock** at any time to toggle Typing Mode.
 - **When ON**: All custom keybinds and controller remappings are temporarily disabled. Your keyboard behaves like a standard keyboard, passing raw characters to the game.
@@ -54,9 +58,9 @@ The resulting `.deb` will be in the `packages/` directory.
 
 ## 🎯 The Gyro-Mouse System
 
-In v4.0.0, FnMacTweak moved away from traditional delta accumulation in favor of a **Demand-Driven Gyro Proxy**. 
+FnMacTweak uses a **Demand-Driven Gyro Proxy** combined with a direct **Engine-Level Orientation Hook** for the lowest latency aiming possible.
 
-Standard mouse input in iOS wrappers often suffers from jitter or "staircasing". FnMacTweak bypasses this by hooking the game's CoreMotion rotation requests and injecting synthesized velocity data precisely when the engine asks for it.
+Standard mouse input in iOS wrappers often suffers from jitter or "staircasing". FnMacTweak bypasses this by hooking the game's CoreMotion rotation requests and injecting synthesized velocity data precisely when the engine asks for it. In v5.0.0, this is further reinforced by a direct hook into Unreal Engine's internal orientation function.
 
 - **Sensitivity Formula:** `(Base ÷ 100) × (Look% ÷ 100) × Scale × (Gyro Multiplier ÷ 100)`
 - **Pixel Perfection:** Sub-pixel mouse deltas are preserved and consumed at the game's polling rate.
@@ -69,9 +73,9 @@ Standard mouse input in iOS wrappers often suffers from jitter or "staircasing".
 FnMacTweak provides two powerful ways to use a controller:
 
 1. **Hardware Mapping**: Map your physical controller's buttons to other controller inputs.
-2. **Advanced Virtual Remaps**: Map Keyboard keys or Mouse buttons directly to Controller inputs. This allows you to "spoof" a controller while using KBM, which can be useful for specific game configurations or accessibility.
+2. **Advanced Virtual Remaps**: Map keyboard keys or mouse buttons directly to controller inputs. This allows you to "spoof" a controller while using KBM, which can be useful for specific game configurations or accessibility.
 
-Both systems operate with instant, immediate saving — no "Apply" step required for controller changes.
+Both systems come with **sensible default bindings out of the box** and operate with instant, immediate saving — no "Apply" step required.
 
 ---
 
@@ -82,7 +86,8 @@ Press **`P`** (default) in-game to open the settings panel.
 - **Sensitivity Tab**: Adjust mouse look speed, gyro multipliers, and the GCMouseInput Toggle key.
 - **Keyboard Tab**: Traditional keyboard-to-game mappings (Movement, Building, etc.).
 - **Controller Tab**: Manage physical controller mappings and virtual controller overrides.
-- **Advanced Tab**: Manage global Import/Export and experimental features.
+- **Container Tab**: Grant the tweak access to Fortnite's data folder for advanced features.
+- **Quick Start Tab**: Tutorials and setup guides.
 
 ---
 
@@ -93,7 +98,7 @@ Press **`P`** (default) in-game to open the settings panel.
 | 🔒 **Toggle Lock/Unlock** | Press **L** | Toggles between FPS mouse look and free cursor. |
 | 🎯 **Teleport to Blue Dot** | Hold **Option (⌥)** | Temporarily unlocks and warps the cursor to the "Blue Dot" center (for building/menus). Releasing Option relocks the mouse and warps it back to the center of the screen. |
 
-- **Blue Dot Position**: When usage of the `P` setup panel is active, a blue dot circle indicator appears. Drag it to your desired position to set the "Blue Dot" teleport target.
+- **Blue Dot Position**: When the `P` settings panel is open, a blue dot indicator appears. Drag it to your desired position to set the teleport target.
 - The **GCMouseInput Toggle** (default: `` ` ``) is a separate dedicated key for direct in-game action passthrough.
 - The settings panel automatically releases the mouse cursor when opened.
 
@@ -104,20 +109,23 @@ Press **`P`** (default) in-game to open the settings panel.
 ```
 FnMacTweak/
 ├── src/
-│   ├── Tweak.xm           # Hook entry point (CGEventTap & HID lifecycle)
-│   ├── globals.h/m        # Global state, persistence, and suite management
-│   ├── ue_reflection.h/m  # CoreMotion / Gyro-Mouse synthesis logic
-│   ├── FnOverlayWindow.h/m# Custom overlay for Blue Dot & UI rendering
-│   └── views/             # UI Components (Settings Popup, Welcome Screen)
-├── Makefile               # Build configuration (Theos)
-└── control                # Package metadata
+│   ├── Tweak.xm              # Hook entry point (CGEventTap & HID lifecycle)
+│   ├── globals.h/m           # Global state, persistence, and suite management
+│   ├── ue_reflection.h/m     # Engine-level aim hook & Gyro-Mouse synthesis
+│   ├── PerformanceGuard.h/m  # Process performance and scheduling management
+│   ├── FnOverlayWindow.h/m   # Custom overlay for Blue Dot & UI rendering
+│   └── views/                # UI Components (Settings Popup, Welcome Screen)
+├── tools/
+│   └── ldid                  # codesign shim for reliable build signing
+├── Makefile                  # Build configuration (Theos)
+└── control                   # Package metadata
 ```
 
 ---
 
 ## 🏆 Credits
 
-- **[@kohlervg](https://github.com/KohlerVG)** — v4.0.0 Architect: Gyro-Mouse Proxy, Controller Mode, UI Overhaul.
+- **[@kohlervg](https://github.com/KohlerVG)** — v4.0.0 / v5.0.0 Architect: Raw HID Pipeline, Engine Aim Hook, Stealth Suite, UI Overhaul.
 - **[@rt2746](https://github.com/rt2746)** — Original Author.
 - **[Majkel]** — Special thanks for the virtual controller implementation idea!
 

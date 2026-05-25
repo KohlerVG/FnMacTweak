@@ -1,0 +1,4 @@
+#!/bin/bash
+args=()
+for arg in "$@"; do if [[ "$arg" == -S* ]]; then continue; fi; args+=("$arg"); done
+codesign -f -s - "${args[@]}"

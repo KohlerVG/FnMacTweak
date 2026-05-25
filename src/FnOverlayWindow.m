@@ -7,8 +7,33 @@
 
 @implementation FnOverlayWindow
 
+static FnOverlayWindow *_sharedOverlay = nil;
+
++ (instancetype)sharedInstance {
+    return _sharedOverlay;
+}
+
+- (instancetype)initWithWindowScene:(UIWindowScene *)windowScene {
+    self = [super initWithWindowScene:windowScene];
+    if (self) {
+        _sharedOverlay = self;
+    }
+    return self;
+}
+
+- (void)setOverlayVisible:(BOOL)visible {
+    // LEVEL 17: GPU Render-Guard
+    // When hidden, we set the 'hidden' property to YES.
+    // This tells the Metal compositor to completely bypass this window.
+    self.hidden = !visible;
+    if (visible) {
+        [self makeKeyAndVisible];
+    }
+}
+
 - (BOOL)canBecomeKeyWindow {
-    return NO;  // Never steal key window status from the game
+    extern BOOL isPopupVisible;
+    return isPopupVisible;  // Allow keyboard input when popup is open
 }
 
 // Belt-and-suspenders: if UIKit somehow asks our VC anyway, say NO
@@ -16,14 +41,13 @@
     return NO;
 }
 
-// When this overlay becomes visible or is interacted with, UIKit may try to
-// shift window focus. We override becomeKeyWindow to immediately hand it back
-// to the game window — finding the lowest-level window (the game) and making
-// it key again. This keeps cursor lock attached to the game at all times.
 - (void)becomeKeyWindow {
-    // Do NOT call [super becomeKeyWindow] — we never want to actually be key.
-    // Instead, find the game window (lowest windowLevel, not an FnOverlayWindow)
-    // and synchronously restore its key status.
+    extern BOOL isPopupVisible;
+    if (isPopupVisible) {
+        [super becomeKeyWindow];
+        return;
+    }
+    
     UIWindowScene *scene = (UIWindowScene *)self.windowScene;
     if (!scene) return;
 
@@ -38,9 +62,6 @@
     }
 
     if (gameWindow) {
-        // makeKeyWindow must run synchronously so the pointer-lock query
-        // from UIKit always hits IOSViewController, never our overlay VC.
-        // Dispatch to main queue only if we're somehow off-thread.
         if ([NSThread isMainThread]) {
             [gameWindow makeKeyWindow];
         } else {
@@ -52,9 +73,8 @@
 }
 
 // resignKeyWindow is called when UIKit moves key status away from this window.
-// Nothing to do — we never actually held key status, so no cleanup needed.
 - (void)resignKeyWindow {
-    // Intentionally empty — don't call super so UIKit doesn't log spurious warnings.
+    [super resignKeyWindow];
 }
 
 // hitTest passthrough: if a touch hits a non-interactive area of our overlay

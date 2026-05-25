@@ -16,6 +16,22 @@
 extern "C" {
 #endif
 
+// --- UNREAL ENGINE INTERNAL TYPES (Level 26) ---
+typedef struct {
+    float X, Y, Z, W;
+} FQuat;
+
+typedef struct {
+    float X, Y, Z;
+} FVector;
+
+// Forward declaration for the Engine-Reflex hook
+void ue_init_engine_reflex(void);
+extern _Atomic float g_engineReflexPitch;
+extern _Atomic float g_engineReflexYaw;
+extern _Atomic float g_engineReflexRoll;
+extern _Atomic BOOL g_engineReflexEnabled;
+
 // ---------------------------------------------------------------------------
 // Button reflection
 // ---------------------------------------------------------------------------

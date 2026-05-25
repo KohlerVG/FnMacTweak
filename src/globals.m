@@ -12,14 +12,14 @@ static void initialize_global_keys() {
     POPUP_KEY = GCKeyCodeF1;
 }
 
-float BASE_XY_SENSITIVITY = 6.4f;
+float BASE_XY_SENSITIVITY = 9.6f;
 float LOOK_SENSITIVITY_X  = 50.0f;
 float LOOK_SENSITIVITY_Y  = 50.0f;
 float SCOPE_SENSITIVITY_X = 50.0f;
 float SCOPE_SENSITIVITY_Y = 50.0f;
-float MACOS_TO_PC_SCALE   = 20.0f;
-float GYRO_MULTIPLIER     = 100.0f;
-double GYRO_SENSE         = 0.001;
+float MACOS_TO_PC_SCALE   = 30.0f;
+float GYRO_MULTIPLIER     = 150.0f;
+double GYRO_SENSE         = 0.0015;
 BOOL isGCMouseDirectActive = NO;
 GCKeyCode GCMOUSE_DIRECT_KEY = 53; // Default to Backtick (GC 53)
 
@@ -29,15 +29,28 @@ double adsSensitivityX = 0.0;
 double adsSensitivityY = 0.0;
 
 // --- GLOBAL INPUT STATE ---
+#include <stdatomic.h>
 BOOL isMouseLocked = NO;
-double mouseAccumX = 0.0;
-double mouseAccumY = 0.0;
+_Atomic double mouseAccumBufferX[2] = {0, 0};
+_Atomic double mouseAccumBufferY[2] = {0, 0};
+_Atomic uint64_t mouseHardwareTimestamp[2] = {0, 0};
+_Atomic int activeBufferIdx = 0;
+
+// LEVEL 24: Quantum Counters (Absolute 0 Tracking)
+_Atomic double g_quantumPushedX = 0;
+_Atomic double g_quantumPushedY = 0;
+
+_Atomic uint64_t g_lastGyroPollTime = 0;
+
+// LEVEL 27: God-Mode (Cache-Aligned State)
+FnGodModeState g_godReflex = {0};
+
 BOOL leftButtonIsPressed = NO;
 BOOL rightButtonIsPressed = NO;
 BOOL middleButtonIsPressed = NO;
-double g_lastGyroPollTime = 0.0;
 id g_virtualController = nil;
 BOOL isControllerModeEnabled = YES;
+FnGCMouseMovedHandler g_originalMouseHandler = nil;
 BOOL isTypingModeEnabled = NO;
 
 id storedKeyboardInput = nil;
@@ -47,6 +60,21 @@ id g_capturedMouseInput = nil;
 int ignoreNextLeftClickCount = 0;
 
 int controllerMappingArray[FnCtrlButtonCount] = {0};
+uint32_t g_vctrlReverseMap[10240] = {0};
+uint32_t g_vctrlCustomMap[10240] = {0};
+uint32_t g_vctrlSuppressionMap[10240] = {0};
+
+void updateVCtrlReverseMap(void) {
+    memset(g_vctrlReverseMap, 0, sizeof(g_vctrlReverseMap));
+    memset(g_vctrlSuppressionMap, 0, sizeof(g_vctrlSuppressionMap));
+    for (int i = 0; i < FnCtrlButtonCount; i++) {
+        int code = controllerMappingArray[i];
+        if (code > 0 && code < 10240) {
+            g_vctrlReverseMap[code] |= (1 << i);
+            g_vctrlSuppressionMap[code] = 1; // Mark as suppressed
+        }
+    }
+}
 
 // --- REMAPPING STORAGE ---
 NSMutableDictionary<NSNumber *, NSNumber *> *keyRemappings = nil;
@@ -56,6 +84,7 @@ GCKeyCode keyRemapArray[512] = {0};
 GCKeyCode fortniteRemapArray[10200] = {0};
 GCKeyCode fortniteReverseMap[10200] = {0};
 uint8_t fortniteBlockedDefaults[10200] = {0};
+dispatch_queue_t g_vctrl_queue = nil;
 
 GCKeyCode mouseButtonRemapArray[MOUSE_REMAP_COUNT] = {0};
 GCKeyCode mouseFortniteArray[MOUSE_REMAP_COUNT] = {0};
@@ -70,6 +99,8 @@ BOOL isPopupVisible = false;
 UIWindow *popupWindow = nil;
 void (^keyCaptureCallback)(GCKeyCode keyCode) = nil;
 void (^mouseButtonCaptureCallback)(int buttonCode) = nil;
+void * g_hidManager = NULL;
+float HID_SENSITIVITY_SCALAR = 2.5f;
 
 // --- INDICATORS ---
 BOOL isBorderlessModeEnabled = false;
@@ -83,7 +114,23 @@ void recalculateSensitivities() {
   adsSensitivityY = (BASE_XY_SENSITIVITY / 100.0) * (SCOPE_SENSITIVITY_Y / 100.0) * MACOS_TO_PC_SCALE;
 }
 
+void loadTweakSettings() {
+  NSDictionary *savedSettings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSettingsKey];
+  if (savedSettings) {
+    float v;
+    v = [savedSettings[kBaseXYKey] floatValue]; if (v > 0) BASE_XY_SENSITIVITY = v;
+    v = [savedSettings[kScaleKey]  floatValue]; if (v > 0) MACOS_TO_PC_SCALE   = v;
+    v = [savedSettings[kGyroMultiplierKey] floatValue]; if (v > 0) GYRO_MULTIPLIER = v;
+    
+    id directKeyVal = savedSettings[kGCMouseDirectKey];
+    if (directKeyVal) {
+        GCMOUSE_DIRECT_KEY = (GCKeyCode)[directKeyVal intValue];
+    }
+  }
+}
+
 void loadKeyRemappings() {
+  loadTweakSettings();
   if (!keyRemappings) keyRemappings = [NSMutableDictionary dictionary];
   memset(keyRemapArray, 0, sizeof(keyRemapArray));
   memset(mouseButtonRemapArray, 0, sizeof(mouseButtonRemapArray));
@@ -183,11 +230,20 @@ void loadFortniteKeybinds() {
 void loadControllerMappings(void) {
     isControllerModeEnabled = YES;
     memset(controllerMappingArray, 0, sizeof(controllerMappingArray));
+    
+    // Initialize with defaults
+    for (int i = 0; i < FnCtrlButtonCount; i++) {
+        controllerMappingArray[i] = getControllerDefaultMapping(i);
+    }
+
+    // Overwrite with custom mappings from UserDefaults
     NSDictionary *saved = [tweakDefaults() dictionaryForKey:kControllerMappingKey];
     if (saved) {
         for (NSString *idxStr in saved) {
             int btnIdx = [idxStr intValue];
-            if (btnIdx >= 0 && btnIdx < FnCtrlButtonCount) controllerMappingArray[btnIdx] = [[saved objectForKey:idxStr] intValue];
+            if (btnIdx >= 0 && btnIdx < FnCtrlButtonCount) {
+                controllerMappingArray[btnIdx] = [[saved objectForKey:idxStr] intValue];
+            }
         }
     }
 
@@ -199,15 +255,22 @@ void loadControllerMappings(void) {
         vctrlRemappings = [NSMutableArray array];
     }
     recookVCtrlRemappings();
+    updateVCtrlReverseMap();
 }
 
 void saveControllerMappings(void) {
+    updateVCtrlReverseMap();
     // Controller Mode is now always enabled
     
     // Save controller hardware mappings
     NSMutableDictionary *out = [NSMutableDictionary dictionary];
     for (int i = 0; i < FnCtrlButtonCount; i++) {
-        if (controllerMappingArray[i] != 0) out[[NSString stringWithFormat:@"%d", i]] = @(controllerMappingArray[i]);
+        int current = controllerMappingArray[i];
+        int def = getControllerDefaultMapping(i);
+        // Only save if it's not zero AND it's different from the default
+        if (current != 0 && current != def) {
+            out[[NSString stringWithFormat:@"%d", i]] = @(current);
+        }
     }
     [tweakDefaults() setObject:out forKey:kControllerMappingKey];
 
@@ -219,11 +282,19 @@ void saveControllerMappings(void) {
 }
 
 void recookVCtrlRemappings(void) {
+    memset(g_vctrlCustomMap, 0, sizeof(g_vctrlCustomMap));
     NSMutableDictionary *cooked = [NSMutableDictionary dictionary];
     for (NSDictionary *remap in vctrlRemappings) {
         NSNumber *src = remap[@"src"];
         NSNumber *dst = remap[@"dst"];
         if (src && dst && [src intValue] >= 0) {
+            int s = [src intValue];
+            int d = [dst intValue];
+            if (s < 10240 && d < 32) {
+                g_vctrlCustomMap[s] |= (1 << d);
+                g_vctrlSuppressionMap[s] = 1; // Mark as suppressed
+            }
+            
             NSMutableSet *set = cooked[src];
             if (!set) {
                 set = [NSMutableSet set];
@@ -233,4 +304,39 @@ void recookVCtrlRemappings(void) {
         }
     }
     vctrlCookedRemappings = [cooked copy];
+}
+
+int getControllerDefaultMapping(int btnIdx) {
+    switch (btnIdx) {
+        case FnCtrlButtonA:        return 44;    // Spacebar
+        case FnCtrlButtonB:        return 41;    // ESC
+        case FnCtrlButtonX:        return 21;    // R (Reload)
+        case FnCtrlButtonY:        return 28;    // Y
+        case FnCtrlL2:             return 10051; // Right Click
+        case FnCtrlR2:             return 10050; // Left Click
+        case FnCtrlR3:             return 10051; // Right Click
+        case FnCtrlLeftStickUp:    return 26;    // W
+        case FnCtrlLeftStickDown:  return 22;    // S
+        case FnCtrlLeftStickLeft:  return 4;     // A
+        case FnCtrlLeftStickRight: return 7;     // D
+        default:                   return 0;
+    }
+}
+#import <mach/mach.h>
+#import <mach/thread_policy.h>
+
+void elevateThreadToRealTime() {
+    thread_time_constraint_policy_data_t policy;
+    // LEVEL 27: Constraint Hardening (0.1ms Slices)
+    policy.period = 100000;      // 0.1ms
+    policy.computation = 50000;   // 0.05ms (50% CPU duty cycle)
+    policy.constraint = 100000;   // 0.1ms
+    policy.preemptible = YES;
+    
+    thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+
+    // LEVEL 20: Core Affinity Pinning
+    thread_affinity_policy_data_t affinity;
+    affinity.affinity_tag = 1; 
+    thread_policy_set(mach_thread_self(), THREAD_AFFINITY_POLICY, (thread_policy_t)&affinity, THREAD_AFFINITY_POLICY_COUNT);
 }

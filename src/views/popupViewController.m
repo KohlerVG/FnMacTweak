@@ -2090,6 +2090,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   [gyroRow addSubview:gyroLabel];
 
   self.gyroMultiplierField = [[UITextField alloc] initWithFrame:CGRectMake(contentWidth - 110, 3, 110, 24)];
+  self.gyroMultiplierField.delegate = self;
   self.gyroMultiplierField.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
   self.gyroMultiplierField.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
   self.gyroMultiplierField.layer.cornerRadius = 4;
@@ -2772,7 +2773,10 @@ static NSString *getKeyName(GCKeyCode keyCode) {
                        message:@"Press any key or click a mouse button to bind it"
                 preferredStyle:UIAlertControllerStyleAlert];
 
-  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    keyCaptureCallback        = nil;
+    mouseButtonCaptureCallback = nil;
+  }]];
 
   ignoreNextLeftClickCount = 1;
   [self presentViewController:alert animated:YES completion:^{
@@ -4156,7 +4160,11 @@ static NSString *getControllerButtonName(NSInteger idx) {
   BOOL isStaged  = self.stagedControllerMappings[@(btnIdx)] != nil;
   int stagedCode = isStaged ? [self.stagedControllerMappings[@(btnIdx)] intValue] : 0;
   int currentCode = isStaged ? stagedCode : savedCode;
-  BOOL isCustomSaved = !isStaged && (savedCode != 0);
+
+  // Distinguish between Default and Custom Saved
+  NSDictionary *savedDict = [tweakDefaults() dictionaryForKey:kControllerMappingKey];
+  BOOL hasCustomSaved = (savedDict[[NSString stringWithFormat:@"%ld", (long)btnIdx]] != nil);
+  BOOL isCustomSaved = !isStaged && hasCustomSaved;
 
   // Key button — exact same frame/bg/cornerRadius as keybinds keyButton
   UIButton *keyButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -4166,7 +4174,7 @@ static NSString *getControllerButtonName(NSInteger idx) {
   keyButton.accessibilityLabel = getControllerButtonName(btnIdx);
   keyButton.tag = 7000 + btnIdx;
 
-  // Color-coded status — mirrors keybinds but skips the "RED" unbound state for controller buttons
+  // Color-coded status — mirrors keybinds
   UIColor *borderColor;
   if (isStaged && currentCode != 0) {
     // YELLOW: staged non-zero — mirrors keybinds staged/yellow
@@ -4179,12 +4187,18 @@ static NSString *getControllerButtonName(NSInteger idx) {
     [keyButton setTitle:getKeyName((GCKeyCode)currentCode) forState:UIControlStateNormal];
     [keyButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     borderColor = [UIColor colorWithWhite:0.65 alpha:1.0];
-  } else {
-    // LIGHT GREY: no mapping or explicitly unbound — mirrors keybinds default/grey
-    [keyButton setTitle:@"—" forState:UIControlStateNormal];
+  } else if (currentCode != 0) {
+    // LIGHT GREY: Default mapping — mirrors keybinds default/grey
+    [keyButton setTitle:getKeyName((GCKeyCode)currentCode) forState:UIControlStateNormal];
     [keyButton setTitleColor:[UIColor colorWithWhite:0.6 alpha:1.0]
                     forState:UIControlStateNormal];
     borderColor = [UIColor colorWithWhite:0.35 alpha:1.0];
+  } else {
+    // DARK GREY: Truly unbound (should be rare with defaults)
+    [keyButton setTitle:@"—" forState:UIControlStateNormal];
+    [keyButton setTitleColor:[UIColor colorWithWhite:0.4 alpha:1.0]
+                    forState:UIControlStateNormal];
+    borderColor = [UIColor colorWithWhite:0.25 alpha:1.0];
   }
 
   keyButton.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
@@ -4735,9 +4749,9 @@ static NSString *getControllerButtonName(NSInteger idx) {
       actionWithTitle:@"Reset All"
                 style:UIAlertActionStyleDestructive
               handler:^(UIAlertAction *a) {
-    // IMMEDIATE RESET: clear all mappings to 0 and save
-    memset(controllerMappingArray, 0, sizeof(controllerMappingArray));
-    saveControllerMappings();
+    // IMMEDIATE RESET: clear all custom mappings and restore defaults
+    [tweakDefaults() removeObjectForKey:kControllerMappingKey];
+    loadControllerMappings();
     
     // Reset custom virtual controller remaps
     [self.stagedVCtrlRemappings removeAllObjects];
@@ -4767,7 +4781,7 @@ static NSString *getControllerButtonName(NSInteger idx) {
                 preferredStyle:UIAlertControllerStyleAlert];
   [alert addAction:[UIAlertAction
       actionWithTitle:@"Cancel"
-                style:UIAlertActionStyleCancel
+                style:UIAlertActionStyleDefault
               handler:^(UIAlertAction *a) {
     keyCaptureCallback        = nil;
     mouseButtonCaptureCallback = nil;
@@ -4900,10 +4914,15 @@ static NSString *getControllerButtonName(NSInteger idx) {
   keyCaptureCallback        = nil;
   mouseButtonCaptureCallback = nil;
   
-  // IMMEDIATE RESET: clear mapping, save, and refresh UI
-  controllerMappingArray[btnIdx] = 0;
+  // IMMEDIATE RESET: clear custom mapping, reload default, and refresh UI
   [self.stagedControllerMappings removeObjectForKey:@(btnIdx)];
-  saveControllerMappings();
+  
+  NSMutableDictionary *saved = [[tweakDefaults() dictionaryForKey:kControllerMappingKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+  [saved removeObjectForKey:[NSString stringWithFormat:@"%ld", (long)btnIdx]];
+  [tweakDefaults() setObject:saved forKey:kControllerMappingKey];
+  [tweakDefaults() synchronize];
+  
+  loadControllerMappings();
   [self refreshControllerBindRows];
   [self updateControllerApplyButton];
 }
@@ -6123,7 +6142,10 @@ static void setShapeBorder(UIView *view, CGFloat radius, CGFloat width,
                        message:@"Press any key or mouse button to bind it"
                 preferredStyle:UIAlertControllerStyleAlert];
 
-  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+    keyCaptureCallback        = nil;
+    mouseButtonCaptureCallback = nil;
+  }]];
 
   ignoreNextLeftClickCount = 1;
   [self presentViewController:alert animated:YES completion:^{

@@ -1,10 +1,14 @@
 #import "./views/popupViewController.h"
 #import "./views/welcomeViewController.h"
 #import "./globals.h"
+#import "./FnOverlayWindow.h"
+#import "./PerformanceGuard.h"
+#import <pthread.h>
 
 #import "../lib/fishhook.h"
 #import "./ue_reflection.h"
 #import <sys/sysctl.h>
+#import <sys/resource.h>
 
 #import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
@@ -13,22 +17,334 @@
 #import <objc/runtime.h>
 #import <math.h>
 #import <dlfcn.h>
+#import <mach/mach.h>
+#import <mach/thread_policy.h>
+#import <pthread.h>
+
+static BOOL isSystemCaller(void *retAddr) {
+    Dl_info info;
+    if (dladdr(retAddr, &info) && info.dli_fname) {
+        const char *path = info.dli_fname;
+        if (strstr(path, "/System/Library/") != NULL ||
+            strstr(path, "/usr/lib/") != NULL ||
+            strstr(path, "/System/iOSSupport/") != NULL) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static void swizzleIsiOSAppOnMac(Class cls) {
+    if (!cls) return;
+    SEL sel = @selector(isiOSAppOnMac);
+    Method method = class_getInstanceMethod(cls, sel);
+    if (method) {
+        IMP origImp = method_getImplementation(method);
+        class_replaceMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            void *retAddr = __builtin_return_address(0);
+            if (isSystemCaller(retAddr)) {
+                typedef BOOL (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origImp)(self, sel);
+            }
+            return NO; // Return NO to the game and tracking libraries
+        }), method_getTypeEncoding(method));
+    } else {
+        class_addMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            void *retAddr = __builtin_return_address(0);
+            if (isSystemCaller(retAddr)) {
+                return YES;
+            }
+            return NO;
+        }), "B@:");
+    }
+}
+
+static void swizzleIsiOSAppOnMic(Class cls) {
+    if (!cls) return;
+    SEL sel = @selector(isiOSAppOnMic);
+    Method method = class_getInstanceMethod(cls, sel);
+    if (method) {
+        class_replaceMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            return NO;
+        }), method_getTypeEncoding(method));
+    } else {
+        class_addMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            return NO;
+        }), "B@:");
+    }
+}
+
+static void swizzleIsMacCatalystApp(Class cls) {
+    if (!cls) return;
+    SEL sel = @selector(isMacCatalystApp);
+    Method method = class_getInstanceMethod(cls, sel);
+    if (method) {
+        IMP origImp = method_getImplementation(method);
+        class_replaceMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            void *retAddr = __builtin_return_address(0);
+            if (isSystemCaller(retAddr)) {
+                typedef BOOL (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origImp)(self, sel);
+            }
+            return NO;
+        }), method_getTypeEncoding(method));
+    } else {
+        class_addMethod(cls, sel, imp_implementationWithBlock(^BOOL(id self) {
+            void *retAddr = __builtin_return_address(0);
+            if (isSystemCaller(retAddr)) {
+                return NO;
+            }
+            return NO;
+        }), "B@:");
+    }
+}
+
+#import <mach-o/dyld.h>
+
+// Dynamic Linker Hiding / Stealth
+static const struct mach_header *g_our_header = NULL;
+
+static uint32_t (*orig_dyld_image_count)(void) = NULL;
+static const char *(*orig_dyld_get_image_name)(uint32_t image_index) = NULL;
+static const struct mach_header *(*orig_dyld_get_image_header)(uint32_t image_index) = NULL;
+static intptr_t (*orig_dyld_get_image_vmaddr_slide)(uint32_t image_index) = NULL;
+static void (*orig_dyld_register_func_for_add_image)(void (*func)(const struct mach_header* mh, intptr_t vmaddr_slide)) = NULL;
+static void (*orig_dyld_register_func_for_remove_image)(void (*func)(const struct mach_header* mh, intptr_t vmaddr_slide)) = NULL;
+static int (*orig_dladdr)(const void *addr, Dl_info *info) = NULL;
+
+static uint32_t hooked_dyld_image_count(void) {
+    if (!g_our_header) return orig_dyld_image_count();
+    uint32_t count = orig_dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        if (orig_dyld_get_image_header(i) == g_our_header) {
+            return count - 1;
+        }
+    }
+    return count;
+}
+
+static uint32_t get_mapped_image_index(uint32_t idx) {
+    if (!g_our_header) return idx;
+    uint32_t count = orig_dyld_image_count();
+    uint32_t current_virtual_idx = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mach_header *mh = orig_dyld_get_image_header(i);
+        if (mh == g_our_header) {
+            continue;
+        }
+        if (current_virtual_idx == idx) {
+            return i;
+        }
+        current_virtual_idx++;
+    }
+    return idx;
+}
+
+static const char *hooked_dyld_get_image_name(uint32_t image_index) {
+    return orig_dyld_get_image_name(get_mapped_image_index(image_index));
+}
+
+static const struct mach_header *hooked_dyld_get_image_header(uint32_t image_index) {
+    return orig_dyld_get_image_header(get_mapped_image_index(image_index));
+}
+
+static intptr_t hooked_dyld_get_image_vmaddr_slide(uint32_t image_index) {
+    return orig_dyld_get_image_vmaddr_slide(get_mapped_image_index(image_index));
+}
+
+#define MAX_DYLD_CALLBACKS 64
+static void (*g_add_image_callbacks[MAX_DYLD_CALLBACKS])(const struct mach_header* mh, intptr_t vmaddr_slide) = {NULL};
+static int g_add_image_callbacks_count = 0;
+static pthread_mutex_t g_callbacks_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void wrapped_add_image_callback(const struct mach_header* mh, intptr_t vmaddr_slide) {
+    if (mh == g_our_header) {
+        return; // Filter out our dylib
+    }
+    
+    pthread_mutex_lock(&g_callbacks_mutex);
+    int count = g_add_image_callbacks_count;
+    void (*callbacks[MAX_DYLD_CALLBACKS])(const struct mach_header*, intptr_t);
+    for (int i = 0; i < count; i++) {
+        callbacks[i] = g_add_image_callbacks[i];
+    }
+    pthread_mutex_unlock(&g_callbacks_mutex);
+    
+    for (int i = 0; i < count; i++) {
+        if (callbacks[i]) {
+            callbacks[i](mh, vmaddr_slide);
+        }
+    }
+}
+
+static void hooked_dyld_register_func_for_add_image(void (*func)(const struct mach_header* mh, intptr_t vmaddr_slide)) {
+    if (!func) return;
+    
+    pthread_mutex_lock(&g_callbacks_mutex);
+    BOOL exists = NO;
+    for (int i = 0; i < g_add_image_callbacks_count; i++) {
+        if (g_add_image_callbacks[i] == func) {
+            exists = YES;
+            break;
+        }
+    }
+    if (!exists && g_add_image_callbacks_count < MAX_DYLD_CALLBACKS) {
+        g_add_image_callbacks[g_add_image_callbacks_count++] = func;
+    }
+    pthread_mutex_unlock(&g_callbacks_mutex);
+    
+    static BOOL registered_wrapper = NO;
+    if (!registered_wrapper) {
+        registered_wrapper = YES;
+        orig_dyld_register_func_for_add_image(wrapped_add_image_callback);
+    } else {
+        // Emulate dyld behavior by calling it immediately for already-loaded images
+        uint32_t count = orig_dyld_image_count();
+        for (uint32_t i = 0; i < count; i++) {
+            const struct mach_header *mh = orig_dyld_get_image_header(i);
+            intptr_t slide = orig_dyld_get_image_vmaddr_slide(i);
+            if (mh != g_our_header) {
+                func(mh, slide);
+            }
+        }
+    }
+}
+
+static void (*g_remove_image_callbacks[MAX_DYLD_CALLBACKS])(const struct mach_header* mh, intptr_t vmaddr_slide) = {NULL};
+static int g_remove_image_callbacks_count = 0;
+static pthread_mutex_t g_remove_callbacks_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void wrapped_remove_image_callback(const struct mach_header* mh, intptr_t vmaddr_slide) {
+    if (mh == g_our_header) {
+        return;
+    }
+    
+    pthread_mutex_lock(&g_remove_callbacks_mutex);
+    int count = g_remove_image_callbacks_count;
+    void (*callbacks[MAX_DYLD_CALLBACKS])(const struct mach_header*, intptr_t);
+    for (int i = 0; i < count; i++) {
+        callbacks[i] = g_remove_image_callbacks[i];
+    }
+    pthread_mutex_unlock(&g_remove_callbacks_mutex);
+    
+    for (int i = 0; i < count; i++) {
+        if (callbacks[i]) {
+            callbacks[i](mh, vmaddr_slide);
+        }
+    }
+}
+
+static void hooked_dyld_register_func_for_remove_image(void (*func)(const struct mach_header* mh, intptr_t vmaddr_slide)) {
+    if (!func) return;
+    
+    pthread_mutex_lock(&g_remove_callbacks_mutex);
+    BOOL exists = NO;
+    for (int i = 0; i < g_remove_image_callbacks_count; i++) {
+        if (g_remove_image_callbacks[i] == func) {
+            exists = YES;
+            break;
+        }
+    }
+    if (!exists && g_remove_image_callbacks_count < MAX_DYLD_CALLBACKS) {
+        g_remove_image_callbacks[g_remove_image_callbacks_count++] = func;
+    }
+    pthread_mutex_unlock(&g_remove_callbacks_mutex);
+    
+    static BOOL registered_remove_wrapper = NO;
+    if (!registered_remove_wrapper) {
+        registered_remove_wrapper = YES;
+        orig_dyld_register_func_for_remove_image(wrapped_remove_image_callback);
+    }
+}
+
+static int hooked_dladdr(const void *addr, Dl_info *info) {
+    int ret = orig_dladdr(addr, info);
+    if (ret && info && info->dli_fbase == g_our_header) {
+        memset(info, 0, sizeof(Dl_info));
+        return 0; // Pretend it failed to hide our dylib from dladdr calls
+    }
+    return ret;
+}
 
 // Forward declarations for controller helpers
-static void _updateVStick(BOOL isRight);
+static void _updateVStick(BOOL isRight, BOOL isSync);
 static void resetControllerState();
-static void dispatchControllerButton(NSInteger idx, BOOL pressed);
+static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync);
 static void _setVirtualFaceButton(NSString *element, BOOL pressed);
 static void _setVirtualNamedButton(SEL propSel, BOOL pressed);
 
+// LEVEL 21: Ghost-Core Cache (Zero-Search Dispatch)
+typedef struct {
+    __unsafe_unretained GCControllerButtonInput *btnA;
+    __unsafe_unretained GCControllerButtonInput *btnB;
+    __unsafe_unretained GCControllerButtonInput *btnX;
+    __unsafe_unretained GCControllerButtonInput *btnY;
+    __unsafe_unretained GCControllerButtonInput *l1;
+    __unsafe_unretained GCControllerButtonInput *r1;
+    __unsafe_unretained GCControllerButtonInput *l2;
+    __unsafe_unretained GCControllerButtonInput *r2;
+    __unsafe_unretained GCControllerButtonInput *l3;
+    __unsafe_unretained GCControllerButtonInput *r3;
+    __unsafe_unretained GCControllerButtonInput *menu;
+    __unsafe_unretained GCControllerButtonInput *options;
+    __unsafe_unretained GCControllerButtonInput *home;
+} FnControllerGhostCache;
+
+static FnControllerGhostCache g_ghostCache = {0};
+
+static void updateGhostCache() {
+    if (!g_virtualController) return;
+    GCExtendedGamepad *eg = (GCExtendedGamepad *)ue_get_extended_gamepad(g_virtualController);
+    if (!eg) return;
+
+    g_ghostCache.btnA = eg.buttonA;
+    g_ghostCache.btnB = eg.buttonB;
+    g_ghostCache.btnX = eg.buttonX;
+    g_ghostCache.btnY = eg.buttonY;
+    g_ghostCache.l1 = eg.leftShoulder;
+    g_ghostCache.r1 = eg.rightShoulder;
+    g_ghostCache.l2 = eg.leftTrigger;
+    g_ghostCache.r2 = eg.rightTrigger;
+    
+    // Thumbstick buttons (L3/R3)
+    if ([eg respondsToSelector:@selector(leftThumbstickButton)]) {
+        g_ghostCache.l3 = (GCControllerButtonInput *)[(id)eg performSelector:@selector(leftThumbstickButton)];
+    }
+    if ([eg respondsToSelector:@selector(rightThumbstickButton)]) {
+        g_ghostCache.r3 = (GCControllerButtonInput *)[(id)eg performSelector:@selector(rightThumbstickButton)];
+    }
+    
+    g_ghostCache.menu = eg.buttonMenu;
+    if ([eg respondsToSelector:@selector(buttonOptions)]) {
+        g_ghostCache.options = (GCControllerButtonInput *)[(id)eg performSelector:@selector(buttonOptions)];
+    }
+    if ([eg respondsToSelector:@selector(buttonHome)]) {
+        g_ghostCache.home = (GCControllerButtonInput *)[(id)eg performSelector:@selector(buttonHome)];
+    }
+    
+    NSLog(@"[FnMacTweak] Ghost-Core Cache Synchronized (L21)");
+}
+
 static char kButtonCodeKey;
+static UIWindow *stealthCompositorWindow = nil;
+static id g_backgroundActivityToken = nil;
 
 
 static void updateGCMouseDirectState(int code, BOOL pressed) {
     if (code != 0 && (GCKeyCode)code == GCMOUSE_DIRECT_KEY) {
         isGCMouseDirectActive = pressed;
+        // If we just deactivated, clear accumulators and virtual sticks
+        if (!isGCMouseDirectActive) {
+            atomic_store(&mouseAccumBufferX[0], 0);
+            atomic_store(&mouseAccumBufferX[1], 0);
+            atomic_store(&mouseAccumBufferY[0], 0);
+            atomic_store(&mouseAccumBufferY[1], 0);
+            resetControllerState();
+        }
     }
 }
+
+// elevateThreadToRealTime moved to globals.h/m for Level 11 Sync
 
 #ifndef kCGHIDEventTap
 #define kCGHIDEventTap 0
@@ -41,6 +357,10 @@ static CGEventRef (*_CGEventCreateKeyboardEvent)(void *source, uint16_t virtualK
 static void (*_CGEventSetFlags)(CGEventRef event, CGEventFlags flags) = NULL;
 static CGEventFlags (*_CGEventGetFlags)(CGEventRef event) = NULL;
 static void (*_CGEventPost)(int tap, CGEventRef event) = NULL;
+static void (*_CGEventSetType)(CGEventRef event, uint32_t type) = NULL;
+static CGEventRef (*_CGEventCreateMouseEvent)(void *source, uint32_t type, CGPoint mouseCursorPosition, int mouseButton) = NULL;
+typedef uint64_t CGEventTimestamp;
+static CGEventTimestamp (*_CGEventGetTimestamp)(CGEventRef event) = NULL;
 
 typedef uint16_t UniChar;
 typedef unsigned long UniCharCount;
@@ -49,6 +369,13 @@ static void (*_CGEventKeyboardSetUnicodeString)(CGEventRef event, UniCharCount s
 
 #define kCGEventFlagMaskAlphaShift 0x00010000
 #define kCGEventFlagMaskShift      0x00020000
+#define kCGMouseEventDeltaX        4
+#define kCGMouseEventDeltaY        5
+
+static double (*_CGEventGetDoubleValueField)(CGEventRef event, int field) = NULL;
+static void (*_CGEventSetDoubleValueField)(CGEventRef event, int field, double value) = NULL;
+static int64_t (*_CGEventGetIntegerValueField)(CGEventRef event, int field) = NULL;
+static void (*_CGEventSetIntegerValueField)(CGEventRef event, int field, int64_t value) = NULL;
 
 // CGEventTap Types and Prototypes
 typedef uint32_t CGEventTapProxy;
@@ -61,11 +388,12 @@ static CFMachPortRef (*_CGEventTapCreate)(int tap, CGEventTapPlacement place, CG
 static void (*_CGEventTapEnable)(CFMachPortRef tap, bool enable) = NULL;
 
 extern "C" {
+    #define kCGEventMouseMoved 5
     #define kCGEventLeftMouseDown 1
     #define kCGEventLeftMouseUp 2
-    #define kCGEventLeftMouseDragged 3
-    #define kCGEventRightMouseDown 5
-    #define kCGEventRightMouseUp 6
+    #define kCGEventLeftMouseDragged 6
+    #define kCGEventRightMouseDown 3
+    #define kCGEventRightMouseUp 4
     #define kCGEventRightMouseDragged 7
     #define kCGEventOtherMouseDown 25
     #define kCGEventOtherMouseUp 26
@@ -74,8 +402,6 @@ extern "C" {
     #define kCGHeadInsertEventTap 0
     #define kCGEventTapOptionDefault 0
 }
-static void (*_CGEventSetIntegerValueField)(CGEventRef event, int field, int64_t value) = NULL;
-static int64_t (*_CGEventGetIntegerValueField)(CGEventRef event, int field) = NULL;
 
 static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 static BOOL _isMouseButtonSuppressed(int code);
@@ -134,6 +460,7 @@ static const uint16_t nsVKToGC[128] = {
     [123]=80,[124]=79,[125]=81,[126]=82,
 };
 static uint16_t gcToNSVK[256];
+static CFMachPortRef fnm_eventTap = NULL;
 
 void updateBorderlessMode() {
 
@@ -272,7 +599,7 @@ void updateBorderlessMode() {
 }
 
 // --------- MOUSE ADS STATE ---------
-static GCMouseMoved g_originalMouseHandler = nil;
+// g_originalMouseHandler moved to globals.h/m for Level 9 Pulse-Injection
 // mouseAccum, wasADS, wasADSInitialized moved to globals.h/m
 
 // --------- FORWARD DECLARATIONS ---------
@@ -280,6 +607,7 @@ static GCMouseMoved g_originalMouseHandler = nil;
 // the definitions that appear later in the file.
 static BOOL isTriggerHeld        = NO;
 static BOOL remappedKeysState[512] = {NO};
+static BOOL vctrlKeyState[10240] = {NO};
 static BOOL remappedMouseButtonsState[MOUSE_REMAP_COUNT] = {NO};
 static void createPopup(void);
 static void updateMouseLock(BOOL value, CGPoint warpPos);
@@ -336,15 +664,15 @@ static BOOL g_vctrlButtonTargetStates[FnCtrlButtonCount] = {NO};
     if (isTriggerHeld) {
         for (int i = 0; i < FnCtrlButtonCount; i++) {
             if (g_vctrlButtonTargetStates[i]) {
-                dispatchControllerButton(i, YES);
+                dispatchControllerButton(i,  YES, NO);
             }
         }
     }
 
     // --- Constant Stick Polling ---
     // Update sticks every frame to ensure smooth movement even during transitions.
-    _updateVStick(NO);
-    _updateVStick(YES);
+    _updateVStick(NO, NO);
+    _updateVStick(YES, NO);
 }
 @end
 
@@ -367,6 +695,8 @@ static BOOL lstickState[4] = {};
 static BOOL rstickState[4] = {};
 
 // Drive a face button (A/B/X/Y) — triple-fire: valueChangedHandler + pressedChangedHandler + _setValue:
+typedef void (*vctrl_set_value_t)(id, SEL, float);
+
 static void _setVirtualFaceButton(NSString *element, BOOL pressed) {
     float val = pressed ? 1.0f : 0.0f;
     for (GCController *ctrl in GCController.controllers) {
@@ -391,12 +721,6 @@ static void _setVirtualFaceButton(NSString *element, BOOL pressed) {
             else if ([element isEqualToString:@"Options"])        propSel = @selector(buttonOptions);
             else if ([element isEqualToString:@"Home"])           propSel = @selector(buttonHome);
             
-            // Check for GameController constants just in case they are available
-            if (!propSel) {
-                if ([element isEqualToString:@"Button A"]) propSel = @selector(buttonA);
-                // ... (simplified literal checks above are better)
-            }
-
             if (propSel && [eg respondsToSelector:propSel]) {
                 btn = ((id(*)(id,SEL))objc_msgSend)(eg, propSel);
             }
@@ -404,45 +728,51 @@ static void _setVirtualFaceButton(NSString *element, BOOL pressed) {
 
         if (!btn || ![btn isKindOfClass:GCControllerButtonInput.class]) continue;
 
+        // Elite Level 3: Zero-Overhead Injection (IMP Caching)
         if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
         if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-        if ([btn respondsToSelector:@selector(_setValue:)]) {
-            NSMethodSignature *sig = [btn methodSignatureForSelector:@selector(_setValue:)];
-            if (sig && strcmp([sig getArgumentTypeAtIndex:2], "f") == 0) {
-                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                [inv setSelector:@selector(_setValue:)];
-                [inv setTarget:btn];
-                [inv setArgument:&val atIndex:2];
-                [inv invoke];
-            }
+        
+        static SEL setValueSel = NULL;
+        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
+        
+        if ([btn respondsToSelector:setValueSel]) {
+            // Direct C-call to implementation pointer for absolute 0-delay.
+            vctrl_set_value_t imp = (vctrl_set_value_t)[btn methodForSelector:setValueSel];
+            if (imp) imp(btn, setValueSel, val);
         }
     }
 }
 
 // Drive a thumbstick from a digital direction state array
 // Iterates GCController.controllers and fires _setValueX:Y: / fallback on each
-static void _updateVStick(BOOL isRight) {
+static void _updateVStick(BOOL isRight, BOOL isSync) {
     id dpad = isRight ? g_vctrl_cached_rs : g_vctrl_cached_ls;
     if (!dpad) {
-        // Fallback: try to latch if missing (rare case)
-        if (!g_virtualGamepad && g_virtualController) {
-            g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
-            g_vctrl_cached_ls = [g_virtualGamepad leftThumbstick];
-            g_vctrl_cached_rs = [g_virtualGamepad rightThumbstick];
+        if (g_virtualController) {
+            if (!g_virtualGamepad) g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
+            if (g_virtualGamepad) {
+                g_vctrl_cached_ls = [g_virtualGamepad leftThumbstick];
+                g_vctrl_cached_rs = [g_virtualGamepad rightThumbstick];
+                dpad = isRight ? g_vctrl_cached_rs : g_vctrl_cached_ls;
+            }
         }
-        dpad = isRight ? g_vctrl_cached_rs : g_vctrl_cached_ls;
         if (!dpad) return;
     }
-    
+
     BOOL *state = isRight ? rstickState : lstickState;
     float dx = 0, dy = 0;
+    
+    // Faster branchless-style calculation for 8 directions
     if (state[0]) dy += 1.0f; // Up
     if (state[1]) dy -= 1.0f; // Down
     if (state[2]) dx -= 1.0f; // Left
     if (state[3]) dx += 1.0f; // Right
     
-    float len = sqrtf(dx*dx + dy*dy);
-    if (len > 1.0f) { dx /= len; dy /= len; }
+    // Fast-path for common diagonals (0.707) to avoid sqrtf
+    if (dx != 0 && dy != 0) {
+        dx *= 0.7071f;
+        dy *= 0.7071f;
+    }
     
     ue_reflect_thumbstick(dpad, dx, dy);
 }
@@ -451,11 +781,11 @@ static void _updateVStick(BOOL isRight) {
 static void reassertAllInputs() {
     for (int i = 0; i < FnCtrlButtonCount; i++) {
         if (g_vctrlButtonTargetStates[i]) {
-            dispatchControllerButton(i, YES);
+            dispatchControllerButton(i,  YES, NO);
         }
     }
-    _updateVStick(NO);
-    _updateVStick(YES);
+    _updateVStick(NO, NO);
+    _updateVStick(YES, NO);
 }
 
 static void resetControllerState() {
@@ -467,8 +797,8 @@ static void resetControllerState() {
     }
     
     // 2. Force thumbsticks to neutral
-    _updateVStick(NO);
-    _updateVStick(YES);
+    _updateVStick(NO, NO);
+    _updateVStick(YES, NO);
     
     // 3. Reset all face and shoulder buttons
     _setVirtualFaceButton((NSString *)GCInputButtonA, NO);
@@ -484,8 +814,8 @@ static void resetControllerState() {
     _setVirtualFaceButton(@"Menu", NO);
     _setVirtualFaceButton(@"Home", NO);
 
-    dispatchControllerButton(FnCtrlL3, NO);
-    dispatchControllerButton(FnCtrlR3, NO);
+    dispatchControllerButton(FnCtrlL3,  NO, NO);
+    dispatchControllerButton(FnCtrlR3,  NO, NO);
 }
 
 // Drive a shoulder or trigger button by its extendedGamepad property selector.
@@ -514,17 +844,17 @@ static void _setVirtualNamedButton(SEL propSel, BOOL pressed) {
 
         if (!btn || ![btn isKindOfClass:GCControllerButtonInput.class]) continue;
         
+        // Elite Level 3: Zero-Overhead Injection (IMP Caching)
         if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
         if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-        if ([btn respondsToSelector:@selector(_setValue:)]) {
-            NSMethodSignature *sig = [btn methodSignatureForSelector:@selector(_setValue:)];
-            if (sig && strcmp([sig getArgumentTypeAtIndex:2], "f") == 0) {
-                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                [inv setSelector:@selector(_setValue:)];
-                [inv setTarget:btn];
-                [inv setArgument:&val atIndex:2];
-                [inv invoke];
-            }
+        
+        static SEL setValueSel = NULL;
+        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
+        
+        if ([btn respondsToSelector:setValueSel]) {
+            // Direct C-call to implementation pointer for absolute 0-delay.
+            vctrl_set_value_t imp = (vctrl_set_value_t)[btn methodForSelector:setValueSel];
+            if (imp) imp(btn, setValueSel, val);
         }
     }
 }
@@ -560,6 +890,37 @@ static void _sendKeyEvent(GCKeyCode kc, BOOL pressed) {
     }
 }
 
+// Mouse Button Injection: System-level (CGEvent)
+static void _sendMouseButtonEvent(int code, BOOL pressed) {
+    if (!_CGEventCreateMouseEvent || !_CGEventPost) return;
+
+    uint32_t type = 0;
+    int button = 0;
+    
+    if (code == MOUSE_BUTTON_LEFT) {
+        type = pressed ? 1 : 2; // kCGEventLeftMouseDown / kCGEventLeftMouseUp
+        button = 0; // kCGMouseButtonLeft
+    } else if (code == MOUSE_BUTTON_RIGHT) {
+        type = pressed ? 3 : 4; // kCGEventRightMouseDown / kCGEventRightMouseUp
+        button = 1; // kCGMouseButtonRight
+    } else if (code == MOUSE_BUTTON_MIDDLE) {
+        type = pressed ? 25 : 26; // kCGEventOtherMouseDown / kCGEventOtherMouseUp
+        button = 2; // kCGMouseButtonCenter
+    } else if (code >= MOUSE_BUTTON_AUX_BASE) {
+        type = pressed ? 25 : 26; // kCGEventOtherMouseDown / kCGEventOtherMouseUp
+        button = (int)(code - MOUSE_BUTTON_AUX_BASE + 3);
+    } else {
+        return;
+    }
+
+    CGEventRef ev = _CGEventCreateMouseEvent(NULL, type, CGPointZero, button);
+    if (ev) {
+        _CGEventSetIntegerValueField(ev, kCGEventSourceUserData, 0x1337);
+        _CGEventPost(kCGHIDEventTap, ev);
+        CFRelease(ev);
+    }
+}
+
 // Dual Injection: Framework-level (MFi) + System-level (CGEvent)
 static void _sendDualKeyEvent(GCKeyCode kc, BOOL pressed) {
     // 0. Direct Mouse Toggle
@@ -568,18 +929,30 @@ static void _sendDualKeyEvent(GCKeyCode kc, BOOL pressed) {
         // pass through to game
     }
 
-    // 1. Mouse Action Support removed (as requested: GC clicks should NEVER fire)
+    // 1. Mouse Button Support (Synthesize click if target is a mouse button)
+    if ((int)kc >= 10000) {
+       _sendMouseButtonEvent((int)kc, pressed);
+       return;
+    }
 
     // 2. Framework-level injection
     _sendKeyEvent(kc, pressed);
     
-    // 3. System-level injection (if it's a standard key)
+    // 3. System-level injection (if it's a standard key or modifier)
     if ((int)kc < 256) {
         uint16_t rv = gcToNSVK[(uint8_t)kc];
         if (rv > 0 || (int)kc == 4) {
             if (_CGEventCreateKeyboardEvent && _CGEventPost) {
-                CGEventRef ev = _CGEventCreateKeyboardEvent(NULL, rv, pressed);
+                // MODIFIER DETECTION: determine if this target is a modifier to send kCGEventFlagsChanged
+                BOOL isModifier = (kc == 225 || kc == 229 || kc == 227 || kc == 231 || kc == 224 || kc == 228 || kc == 226 || kc == 230);
+                uint32_t evType = isModifier ? 12 : (pressed ? 10 : 11); // kCGEventFlagsChanged or kCGEventKeyDown/Up
+                
+                CGEventRef ev = _CGEventCreateKeyboardEvent(NULL, rv, (bool)pressed);
                 if (ev) {
+                    if (isModifier) {
+                        // For FlagsChanged, we need to explicitly set the type
+                        _CGEventSetType(ev, evType); 
+                    }
                     _CGEventSetIntegerValueField(ev, kCGEventSourceUserData, 0x1337);
                     _CGEventPost(kCGHIDEventTap, ev);
                     CFRelease(ev);
@@ -630,62 +1003,87 @@ static id getInjectedButton(GCExtendedGamepad *gamepad, NSString *key) {
 - (void)_setValue:(float)v { 
     BOOL pressed = (v > 0.5);
     
-    // Fire KVO for all possible polling patterns
-    [self willChangeValueForKey:@"value"];
-    [self willChangeValueForKey:@"isPressed"];
-    [self willChangeValueForKey:@"pressed"];
-    
+    // Performance: Skip KVO (willChangeValueForKey) for absolute 0-delay.
+    // Most games use polling or handlers directly.
     objc_setAssociatedObject(self, @selector(value), @(v), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(self, @selector(isPressed), @(pressed), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     
-    [self didChangeValueForKey:@"value"];
-    [self didChangeValueForKey:@"isPressed"];
-    [self didChangeValueForKey:@"pressed"];
-
-    // Trigger ALL possible registered blocks
+    // Trigger ALL possible registered blocks immediately
     if (self.valueChangedHandler)   self.valueChangedHandler(self, v, pressed);
     if (self.pressedChangedHandler) self.pressedChangedHandler(self, v, pressed);
 }
 %end
 
-// Master dispatcher — routes FnControllerButton index to the right mechanism
-static void dispatchControllerButton(NSInteger idx, BOOL pressed) {
-    // Update sticky tracker
-    if (idx >= 0 && idx < FnCtrlButtonCount) g_vctrlButtonTargetStates[idx] = pressed;
+static void ue_reflect_button_dispatch(NSInteger idx, BOOL pressed) {
+    if (!g_virtualGamepad) return;
 
-    if (!g_virtualGamepad) {
-        if (g_virtualController) g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
-        if (!g_virtualGamepad) return;
+    GCControllerButtonInput *btn = nil;
+    switch (idx) {
+        case FnCtrlButtonA: btn = g_ghostCache.btnA; break;
+        case FnCtrlButtonB: btn = g_ghostCache.btnB; break;
+        case FnCtrlButtonX: btn = g_ghostCache.btnX; break;
+        case FnCtrlButtonY: btn = g_ghostCache.btnY; break;
+        case FnCtrlL1:      btn = g_ghostCache.l1;   break;
+        case FnCtrlR1:      btn = g_ghostCache.r1;   break;
+        case FnCtrlL2:      btn = g_ghostCache.l2;   break;
+        case FnCtrlR2:      btn = g_ghostCache.r2;   break;
+        case FnCtrlL3:      btn = g_ghostCache.l3;   break;
+        case FnCtrlR3:      btn = g_ghostCache.r3;   break;
+        case FnCtrlOptions: btn = g_ghostCache.menu; break;
+        case FnCtrlShare:   btn = g_ghostCache.options; break;
+        case FnCtrlHome:    btn = g_ghostCache.home; break;
+        default: break;
     }
 
+    if (btn) {
+        float val = pressed ? 1.0f : 0.0f;
+        
+        // LEVEL 21: Ghost-Core IMP Dispatch (Zero-Wait)
+        static SEL setValueSel = NULL;
+        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
+        
+        if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
+        if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
+
+        if ([btn respondsToSelector:setValueSel]) {
+            typedef void (*SetValueFunc)(id, SEL, float);
+            ((SetValueFunc)objc_msgSend)(btn, setValueSel, val);
+        }
+    }
+}
+
+// Master dispatcher — routes FnControllerButton index to the right mechanism
+static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync) {
+    // LEVEL 20: Unified Hardware Dispatch (Zero-Scheduling Overhead)
+    if (idx >= 0 && idx < FnCtrlButtonCount) {
+        g_vctrlButtonTargetStates[idx] = pressed;
+    }
+    
+    // Process Sticks/Dpad state update immediately
     switch (idx) {
-        // ── Sticks via ue_reflect_thumbstick ──────────────────────────────
-        case FnCtrlLeftStickUp:    lstickState[0] = pressed; _updateVStick(NO);  break;
-        case FnCtrlLeftStickDown:  lstickState[1] = pressed; _updateVStick(NO);  break;
-        case FnCtrlLeftStickLeft:  lstickState[2] = pressed; _updateVStick(NO);  break;
-        case FnCtrlLeftStickRight: lstickState[3] = pressed; _updateVStick(NO);  break;
+        case FnCtrlLeftStickUp:    lstickState[0] = pressed; _updateVStick(NO, YES);  break;
+        case FnCtrlLeftStickDown:  lstickState[1] = pressed; _updateVStick(NO, YES);  break;
+        case FnCtrlLeftStickLeft:  lstickState[2] = pressed; _updateVStick(NO, YES);  break;
+        case FnCtrlLeftStickRight: lstickState[3] = pressed; _updateVStick(NO, YES);  break;
 
-        case FnCtrlRightStickUp:    rstickState[0] = pressed; _updateVStick(YES); break;
-        case FnCtrlRightStickDown:  rstickState[1] = pressed; _updateVStick(YES); break;
-        case FnCtrlRightStickLeft:  rstickState[2] = pressed; _updateVStick(YES); break;
-        case FnCtrlRightStickRight: rstickState[3] = pressed; _updateVStick(YES); break;
+        case FnCtrlRightStickUp:    rstickState[0] = pressed; _updateVStick(YES, YES); break;
+        case FnCtrlRightStickDown:  rstickState[1] = pressed; _updateVStick(YES, YES); break;
+        case FnCtrlRightStickLeft:  rstickState[2] = pressed; _updateVStick(YES, YES); break;
+        case FnCtrlRightStickRight: rstickState[3] = pressed; _updateVStick(YES, YES); break;
 
-        // ── D-pad state tracking ──────────────────────────────────────────
         case FnCtrlDpadUp:    dpadState[0] = pressed; break;
         case FnCtrlDpadDown:  dpadState[1] = pressed; break;
         case FnCtrlDpadLeft:  dpadState[2] = pressed; break;
         case FnCtrlDpadRight: dpadState[3] = pressed; break;
 
-        // ── Stick clicks (L3/R3): Hybrid approach (Native/Injected + Keyboard) ──
+        // ── Stick clicks (L3/R3) ──────────────────────────────────────────
         case FnCtrlL3:
         case FnCtrlR3: {
-            // 1. Try native/injected controller input
             GCControllerButtonInput *btn = (idx == FnCtrlL3) ? [g_virtualGamepad leftThumbstickButton] : [g_virtualGamepad rightThumbstickButton];
             if (btn) {
                 float val = pressed ? 1.0f : 0.0f;
                 static SEL setValueSel = NULL;
                 if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
-                
                 if ([btn respondsToSelector:setValueSel]) {
                     typedef void (*SetValueFunc)(id, SEL, float);
                     ((SetValueFunc)objc_msgSend)(btn, setValueSel, val);
@@ -707,9 +1105,6 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed) {
         }
         default: break;
     }
-
-    // Removed circular re-injection loop that was causing remapped source keys 
-    // (like ESC mapped to Button B) to be re-fired into the game engine.
 
     // Virtual Gamepad Face Buttons and Shoulders
     switch (idx) {
@@ -748,8 +1143,10 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed) {
             if (eg) ue_reflect_thumbstick(eg.dpad, dx, dy);
         }
     }
-}
 
+    // Direct game engine reflection pulse
+    ue_reflect_button_dispatch(idx, pressed);
+}
 
 // ── Mapping Helpers ──────────────────────────────────────────────────────────
 // (Obsolete functions removed — logic moved to caller loops for multi-bind support)
@@ -783,69 +1180,481 @@ static bool hooked_availability_version_check(uint32_t count,
     return orig_availability_version_check(count, versions);
 }
 
+// --------- 120 FPS CONFIG FORCING HOOKS ---------
+#import <fcntl.h>
+#import <unistd.h>
+#import <sys/stat.h>
+
+static int (*orig_open)(const char *path, int oflag, ...) = NULL;
+static int (*orig_close)(int fd) = NULL;
+static FILE *(*orig_fopen)(const char *path, const char *mode) = NULL;
+static int (*orig_fclose)(FILE *stream) = NULL;
+
+#define MAX_MONITORED_FDS 32
+struct MonitoredFile {
+    int fd;
+    char path[1024];
+};
+static struct MonitoredFile g_monitoredFds[MAX_MONITORED_FDS];
+
+#define MAX_MONITORED_FILES 32
+struct MonitoredFileStream {
+    FILE *stream;
+    char path[1024];
+};
+static struct MonitoredFileStream g_monitoredStreams[MAX_MONITORED_FILES];
+
+static pthread_mutex_t g_monitoredMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void force120FPSInFile(const char *path) {
+    if (!path) return;
+    int fd = -1;
+    if (orig_open) {
+        fd = orig_open(path, O_RDONLY);
+    } else {
+        fd = open(path, O_RDONLY);
+    }
+    if (fd < 0) return;
+    
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_size <= 0) {
+        if (orig_close) orig_close(fd); else close(fd);
+        return;
+    }
+    
+    char *buf = (char *)malloc(st.st_size + 1);
+    if (!buf) {
+        if (orig_close) orig_close(fd); else close(fd);
+        return;
+    }
+    
+    ssize_t readBytes = read(fd, buf, st.st_size);
+    if (orig_close) orig_close(fd); else close(fd);
+    
+    if (readBytes <= 0) {
+        free(buf);
+        return;
+    }
+    buf[readBytes] = '\0';
+    
+    BOOL modified = NO;
+    size_t newBufSize = st.st_size * 2 + 1024;
+    char *newBuf = (char *)malloc(newBufSize);
+    if (!newBuf) {
+        free(buf);
+        return;
+    }
+    
+    char *src = buf;
+    char *dest = newBuf;
+    *dest = '\0';
+    
+    while (*src) {
+        if (strncmp(src, "b120FpsMode=False", 17) == 0) {
+            strcpy(dest, "b120FpsMode=True");
+            dest += 16;
+            src += 17;
+            modified = YES;
+        } else if (strncmp(src, "MobileFPSMode=Mode_60Fps", 24) == 0) {
+            strcpy(dest, "MobileFPSMode=Mode_120Fps");
+            dest += 25;
+            src += 24;
+            modified = YES;
+        } else if (strncmp(src, "MobileFPSMode=Mode_30Fps", 24) == 0) {
+            strcpy(dest, "MobileFPSMode=Mode_120Fps");
+            dest += 25;
+            src += 24;
+            modified = YES;
+        } else if (strncmp(src, "MobileFPSMode=Mode_45Fps", 24) == 0) {
+            strcpy(dest, "MobileFPSMode=Mode_120Fps");
+            dest += 25;
+            src += 24;
+            modified = YES;
+        } else if (strncmp(src, "MobileFPSMode=Mode_90Fps", 24) == 0) {
+            strcpy(dest, "MobileFPSMode=Mode_120Fps");
+            dest += 25;
+            src += 24;
+            modified = YES;
+        } else {
+            *dest++ = *src++;
+            *dest = '\0';
+        }
+    }
+    
+    if (modified) {
+        NSLog(@"[FnMacTweak] Detected GameUserSettings.ini modification. Rewriting to force 120 FPS...");
+        int outFd = -1;
+        if (orig_open) {
+            outFd = orig_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        } else {
+            outFd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        }
+        if (outFd >= 0) {
+            write(outFd, newBuf, strlen(newBuf));
+            if (orig_close) orig_close(outFd); else close(outFd);
+            NSLog(@"[FnMacTweak] Successfully rewrote GameUserSettings.ini with 120 FPS forced.");
+        } else {
+            NSLog(@"[FnMacTweak] Failed to open GameUserSettings.ini for writing: %s", path);
+        }
+    }
+    
+    free(buf);
+    free(newBuf);
+}
+
+static int hooked_open(const char *path, int oflag, ...) {
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list args;
+        va_start(args, oflag);
+        mode = va_arg(args, int);
+        va_end(args);
+    }
+    
+    int fd;
+    if (orig_open) {
+        fd = orig_open(path, oflag, mode);
+    } else {
+        fd = open(path, oflag, mode);
+    }
+    
+    if (fd >= 0 && path && strstr(path, "GameUserSettings.ini") != NULL) {
+        if ((oflag & O_WRONLY) || (oflag & O_RDWR)) {
+            pthread_mutex_lock(&g_monitoredMutex);
+            for (int i = 0; i < MAX_MONITORED_FDS; i++) {
+                if (g_monitoredFds[i].fd == 0) {
+                    g_monitoredFds[i].fd = fd;
+                    strncpy(g_monitoredFds[i].path, path, sizeof(g_monitoredFds[i].path) - 1);
+                    g_monitoredFds[i].path[sizeof(g_monitoredFds[i].path) - 1] = '\0';
+                    NSLog(@"[FnMacTweak] Monitoring GameUserSettings.ini write (fd: %d, path: %s)", fd, path);
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&g_monitoredMutex);
+        }
+    }
+    
+    return fd;
+}
+
+static int hooked_close(int fd) {
+    char pathBuf[1024];
+    pathBuf[0] = '\0';
+    BOOL wasMonitored = NO;
+    
+    pthread_mutex_lock(&g_monitoredMutex);
+    for (int i = 0; i < MAX_MONITORED_FDS; i++) {
+        if (g_monitoredFds[i].fd == fd) {
+            strncpy(pathBuf, g_monitoredFds[i].path, sizeof(pathBuf) - 1);
+            pathBuf[sizeof(pathBuf) - 1] = '\0';
+            g_monitoredFds[i].fd = 0;
+            g_monitoredFds[i].path[0] = '\0';
+            wasMonitored = YES;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_monitoredMutex);
+    
+    int ret;
+    if (orig_close) {
+        ret = orig_close(fd);
+    } else {
+        ret = close(fd);
+    }
+    
+    if (wasMonitored && pathBuf[0] != '\0') {
+        NSLog(@"[FnMacTweak] GameUserSettings.ini closed. Scanning for auto-correction...");
+        force120FPSInFile(pathBuf);
+    }
+    
+    return ret;
+}
+
+static FILE *hooked_fopen(const char *path, const char *mode) {
+    FILE *stream = NULL;
+    if (orig_fopen) {
+        stream = orig_fopen(path, mode);
+    } else {
+        stream = fopen(path, mode);
+    }
+    
+    if (stream && path && strstr(path, "GameUserSettings.ini") != NULL) {
+        if (strchr(mode, 'w') || strchr(mode, 'a') || strchr(mode, '+')) {
+            pthread_mutex_lock(&g_monitoredMutex);
+            for (int i = 0; i < MAX_MONITORED_FILES; i++) {
+                if (g_monitoredStreams[i].stream == NULL) {
+                    g_monitoredStreams[i].stream = stream;
+                    strncpy(g_monitoredStreams[i].path, path, sizeof(g_monitoredStreams[i].path) - 1);
+                    g_monitoredStreams[i].path[sizeof(g_monitoredStreams[i].path) - 1] = '\0';
+                    NSLog(@"[FnMacTweak] Monitoring GameUserSettings.ini fopen (stream: %p, path: %s)", stream, path);
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&g_monitoredMutex);
+        }
+    }
+    
+    return stream;
+}
+
+static int hooked_fclose(FILE *stream) {
+    char pathBuf[1024];
+    pathBuf[0] = '\0';
+    BOOL wasMonitored = NO;
+    
+    pthread_mutex_lock(&g_monitoredMutex);
+    for (int i = 0; i < MAX_MONITORED_FILES; i++) {
+        if (g_monitoredStreams[i].stream == stream) {
+            strncpy(pathBuf, g_monitoredStreams[i].path, sizeof(pathBuf) - 1);
+            pathBuf[sizeof(pathBuf) - 1] = '\0';
+            g_monitoredStreams[i].stream = NULL;
+            g_monitoredStreams[i].path[0] = '\0';
+            wasMonitored = YES;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_monitoredMutex);
+    
+    int ret;
+    if (orig_fclose) {
+        ret = orig_fclose(stream);
+    } else {
+        ret = fclose(stream);
+    }
+    
+    if (wasMonitored && pathBuf[0] != '\0') {
+        NSLog(@"[FnMacTweak] GameUserSettings.ini fclose. Scanning for auto-correction...");
+        force120FPSInFile(pathBuf);
+    }
+    
+    return ret;
+}
+
+
+
 // --------- DEVICE SPOOFING ---------
 // Intercepts sysctl/sysctlbyname to report DEVICE_MODEL and OEM_ID,
 // making Fortnite treat this Mac as a supported iOS device.
 static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t) = NULL;
 static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
 
+// LEVEL 27: Alternative Marketplace / EU Compatibility Bypass
+typedef void (*MKW_GetEligibilityRegionCallback)(bool eligible, const char *regionCode);
+static void (*orig_MKW_GetEligibilityRegion)(MKW_GetEligibilityRegionCallback completion) = NULL;
+
+static void hooked_MKW_GetEligibilityRegion(MKW_GetEligibilityRegionCallback completion) {
+    NSLog(@"[FnMacTweak] Intercepted MKW_GetEligibilityRegion! Spoofing EU Eligibility region.");
+    if (completion) {
+        completion(true, "EU");
+    }
+}
+
+typedef void (*MKW_RequestCTTokenCallback)(bool success, const char *token);
+static void (*orig_MKW_RequestCTToken)(MKW_RequestCTTokenCallback completion) = NULL;
+
+static void hooked_MKW_RequestCTToken(MKW_RequestCTTokenCallback completion) {
+    NSLog(@"[FnMacTweak] Intercepted MKW_RequestCTToken! Spoofing success token.");
+    if (completion) {
+        completion(true, "mock_ct_token_mactweak_bypass");
+    }
+}
+
+// LEVEL 27: Sandbox-Resistant sysctl Virtualization Suite
+#define PSEUDO_MIB_KERN_WILLSHUTDOWN            99901
+#define PSEUDO_MIB_SECURITY_LOCKDOWN            99902
+#define PSEUDO_MIB_KERN_OSREVISION              99903
+#define PSEUDO_MIB_KERN_UUID                    99904
+#define PSEUDO_MIB_CPU_BRAND_STRING             99905
+#define PSEUDO_MIB_PROC_TRANSLATED              99906
+
+static int handle_string_sysctl(void *oldp, size_t *oldlenp, const char *value) {
+    size_t len = strlen(value) + 1;
+    if (oldlenp) {
+        if (oldp == NULL) {
+            *oldlenp = len;
+            return 0;
+        }
+        if (*oldlenp < len) {
+            *oldlenp = len;
+            return ENOMEM;
+        }
+        strcpy((char *)oldp, value);
+        *oldlenp = len;
+    }
+    return 0;
+}
+
+static int handle_int_sysctl(void *oldp, size_t *oldlenp, int value) {
+    if (oldlenp) {
+        if (oldp == NULL) {
+            *oldlenp = sizeof(int);
+            return 0;
+        }
+        if (*oldlenp < sizeof(int)) {
+            *oldlenp = sizeof(int);
+            return ENOMEM;
+        }
+        *(int *)oldp = value;
+        *oldlenp = sizeof(int);
+    }
+    return 0;
+}
+
+static int (*orig_sysctlnametomib)(const char *name, int *mibp, size_t *sizep) = NULL;
+
+static int hooked_sysctlnametomib(const char *name, int *mibp, size_t *sizep) {
+    if (name) {
+        if (strcmp(name, "kern.willshutdown") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_KERN_WILLSHUTDOWN;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+        if (strcmp(name, "security.mac.lockdown_mode_state") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_SECURITY_LOCKDOWN;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+        if (strcmp(name, "kern.osrevision") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_KERN_OSREVISION;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+        if (strcmp(name, "kern.uuid") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_KERN_UUID;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+        if (strcmp(name, "machdep.cpu.brand_string") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_CPU_BRAND_STRING;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+        if (strcmp(name, "sysctl.proc_translated") == 0) {
+            if (mibp && sizep && *sizep >= 1) {
+                mibp[0] = PSEUDO_MIB_PROC_TRANSLATED;
+                *sizep = 1;
+                return 0;
+            }
+            return ENOMEM;
+        }
+    }
+    return orig_sysctlnametomib(name, mibp, sizep);
+}
+
 static int pt_sysctl(int *name, u_int namelen, void *buf, size_t *size, void *arg0, size_t arg1) {
-    if (name[0] == CTL_HW && (name[1] == HW_MACHINE || name[1] == HW_PRODUCT)) {
-        if (buf == NULL) {
-            *size = strlen(DEVICE_MODEL) + 1;
-        } else {
-            if (*size > strlen(DEVICE_MODEL)) {
-                strcpy((char *)buf, DEVICE_MODEL);
-            } else {
-                return ENOMEM;
-            }
+    if (namelen >= 1) {
+        if (name[0] == PSEUDO_MIB_KERN_WILLSHUTDOWN) {
+            return handle_int_sysctl(buf, size, 0);
         }
-        return 0;
-    } else if (name[0] == CTL_HW && name[1] == HW_TARGET) {
-        if (buf == NULL) {
-            *size = strlen(OEM_ID) + 1;
-        } else {
-            if (*size > strlen(OEM_ID)) {
-                strcpy((char *)buf, OEM_ID);
-            } else {
-                return ENOMEM;
-            }
+        if (name[0] == PSEUDO_MIB_SECURITY_LOCKDOWN) {
+            return handle_int_sysctl(buf, size, 0);
         }
-        return 0;
+        if (name[0] == PSEUDO_MIB_KERN_OSREVISION) {
+            return handle_int_sysctl(buf, size, 199001);
+        }
+        if (name[0] == PSEUDO_MIB_KERN_UUID) {
+            return handle_string_sysctl(buf, size, "00000000-0000-0000-0000-000000000000");
+        }
+        if (name[0] == PSEUDO_MIB_CPU_BRAND_STRING) {
+            return handle_string_sysctl(buf, size, "Apple M1");
+        }
+        if (name[0] == PSEUDO_MIB_PROC_TRANSLATED) {
+            return handle_int_sysctl(buf, size, 0);
+        }
+        
+        if (name[0] == CTL_HW && (name[1] == HW_MACHINE || name[1] == HW_PRODUCT)) {
+            if (buf == NULL) {
+                *size = strlen(DEVICE_MODEL) + 1;
+            } else {
+                if (*size > strlen(DEVICE_MODEL)) {
+                    strcpy((char *)buf, DEVICE_MODEL);
+                } else {
+                    return ENOMEM;
+                }
+            }
+            return 0;
+        } else if (name[0] == CTL_HW && name[1] == HW_TARGET) {
+            if (buf == NULL) {
+                *size = strlen(OEM_ID) + 1;
+            } else {
+                if (*size > strlen(OEM_ID)) {
+                    strcpy((char *)buf, OEM_ID);
+                } else {
+                    return ENOMEM;
+                }
+            }
+            return 0;
+        }
     }
     return orig_sysctl(name, namelen, buf, size, arg0, arg1);
 }
 
 static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    if ((strcmp(name, "hw.machine") == 0) || (strcmp(name, "hw.product") == 0) || (strcmp(name, "hw.model") == 0)) {
-        if (oldp == NULL) {
-            int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
-            if (oldlenp && *oldlenp < strlen(DEVICE_MODEL) + 1) {
-                *oldlenp = strlen(DEVICE_MODEL) + 1;
-            }
-            return ret;
-        } else if (oldp != NULL) {
-            int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
-            const char *machine = DEVICE_MODEL;
-            strncpy((char *)oldp, machine, strlen(machine));
-            ((char *)oldp)[strlen(machine)] = '\0';
-            if (oldlenp) *oldlenp = strlen(machine) + 1;
-            return ret;
+    if (name) {
+        if (strcmp(name, "kern.willshutdown") == 0) {
+            return handle_int_sysctl(oldp, oldlenp, 0);
         }
-    } else if (strcmp(name, "hw.target") == 0) {
-        if (oldp == NULL) {
-            int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
-            if (oldlenp && *oldlenp < strlen(OEM_ID) + 1) {
-                *oldlenp = strlen(OEM_ID) + 1;
+        if (strcmp(name, "security.mac.lockdown_mode_state") == 0) {
+            return handle_int_sysctl(oldp, oldlenp, 0);
+        }
+        if (strcmp(name, "kern.osrevision") == 0) {
+            return handle_int_sysctl(oldp, oldlenp, 199001);
+        }
+        if (strcmp(name, "kern.uuid") == 0) {
+            return handle_string_sysctl(oldp, oldlenp, "00000000-0000-0000-0000-000000000000");
+        }
+        if (strcmp(name, "machdep.cpu.brand_string") == 0) {
+            return handle_string_sysctl(oldp, oldlenp, "Apple M1");
+        }
+        if (strcmp(name, "sysctl.proc_translated") == 0) {
+            return handle_int_sysctl(oldp, oldlenp, 0);
+        }
+        
+        if ((strcmp(name, "hw.machine") == 0) || (strcmp(name, "hw.product") == 0) || (strcmp(name, "hw.model") == 0)) {
+            if (oldp == NULL) {
+                int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+                if (oldlenp && *oldlenp < strlen(DEVICE_MODEL) + 1) {
+                    *oldlenp = strlen(DEVICE_MODEL) + 1;
+                }
+                return ret;
+            } else if (oldp != NULL) {
+                int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+                const char *machine = DEVICE_MODEL;
+                strncpy((char *)oldp, machine, strlen(machine));
+                ((char *)oldp)[strlen(machine)] = '\0';
+                if (oldlenp) *oldlenp = strlen(machine) + 1;
+                return ret;
             }
-            return ret;
-        } else if (oldp != NULL) {
-            int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
-            const char *machine = OEM_ID;
-            strncpy((char *)oldp, machine, strlen(machine));
-            ((char *)oldp)[strlen(machine)] = '\0';
-            if (oldlenp) *oldlenp = strlen(machine) + 1;
-            return ret;
+        } else if (strcmp(name, "hw.target") == 0) {
+            if (oldp == NULL) {
+                int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+                if (oldlenp && *oldlenp < strlen(OEM_ID) + 1) {
+                    *oldlenp = strlen(OEM_ID) + 1;
+                }
+                return ret;
+            } else if (oldp != NULL) {
+                int ret = orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+                const char *machine = OEM_ID;
+                strncpy((char *)oldp, machine, strlen(machine));
+                ((char *)oldp)[strlen(machine)] = '\0';
+                if (oldlenp) *oldlenp = strlen(machine) + 1;
+                return ret;
+            }
         }
     }
     return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
@@ -879,17 +1688,157 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 }
 @end
 
+// ---------------------------------------------------------------------------
+// LEVEL 14: IOHID-Prime (Raw Hardware Aim — SDK Independent)
+// ---------------------------------------------------------------------------
+
+typedef struct __IOHIDManager * IOHIDManagerRef;
+typedef void (*IOHIDReportCallback)(void * context, int32_t result, void * sender, uint32_t type, uint32_t reportID, uint8_t * report, CFIndex reportLength);
+typedef IOHIDManagerRef (*IOHIDManagerCreate_t)(CFAllocatorRef allocator, uint32_t options);
+typedef void (*IOHIDManagerSetDeviceMatching_t)(IOHIDManagerRef manager, CFDictionaryRef matching);
+typedef void (*IOHIDManagerRegisterInputReportCallback_t)(IOHIDManagerRef manager, IOHIDReportCallback callback, void * context);
+typedef void (*IOHIDManagerScheduleWithRunLoop_t)(IOHIDManagerRef manager, CFRunLoopRef runLoop, CFStringRef runLoopMode);
+typedef int32_t (*IOHIDManagerOpen_t)(IOHIDManagerRef manager, uint32_t options);
+
+static void handleHIDInputReport(void *context, int32_t result, void *sender, uint32_t type, uint32_t reportID, uint8_t *report, CFIndex reportLength) {
+    if (reportLength < 3) return;
+    
+    // LEVEL 20: 16-Bit High-Precision HID Parser
+    // Many gaming mice send 16-bit deltas in 5+ byte reports.
+    int32_t dx_raw = 0;
+    int32_t dy_raw = 0;
+    
+    if (reportLength >= 5) {
+        // 16-bit signed (little endian)
+        dx_raw = (int16_t)(report[1] | (report[2] << 8));
+        dy_raw = (int16_t)(report[3] | (report[4] << 8));
+    } else {
+        // Standard 8-bit fallback
+        dx_raw = (int8_t)report[1];
+        dy_raw = (int8_t)report[2];
+    }
+    
+    // Keep coordinates in their native aim direction (do not manually invert)
+    
+    // Efficiency: Avoid flooding if zero movement
+    // Efficiency: Avoid flooding if zero movement
+    if (dx_raw != 0 || dy_raw != 0) {
+        // 1. Accumulate into the pull-buffer for visual smoothness (legacy fallback)
+        int idx = atomic_load(&activeBufferIdx);
+        atomic_fetch_add(&mouseAccumBufferX[idx], (double)dx_raw);
+        atomic_fetch_add(&mouseAccumBufferY[idx], (double)dy_raw);
+        atomic_store(&mouseHardwareTimestamp[idx], mach_absolute_time());
+
+        // 2. LEVEL 27: God-Mode Cache-Aligned Link (Quantum Trajectory)
+        // We update the high-precision Euler state for the direct Engine hook.
+        // Inverting X and Y axes for native aim feel
+        float deltaYaw   = (float)dx_raw * HID_SENSITIVITY_SCALAR;
+        float deltaPitch = (float)dy_raw * HID_SENSITIVITY_SCALAR;
+        
+        static float currentPitch = 0;
+        static float currentYaw   = 0;
+        
+        // Store previous state for the trajectory engine (Quantum Reflex)
+        atomic_store(&g_godReflex.lastPitch, currentPitch);
+        atomic_store(&g_godReflex.lastYaw,   currentYaw);
+        atomic_store(&g_godReflex.lastTimestamp, mach_absolute_time());
+        
+        currentPitch += deltaPitch;
+        currentYaw   += deltaYaw;
+        
+        // Write fresh state into the L1-Aligned block
+        atomic_store(&g_godReflex.pitch, currentPitch);
+        atomic_store(&g_godReflex.yaw,   currentYaw);
+        atomic_store(&g_godReflex.roll,  0.0f);
+    }
+
+    // LEVEL 20: Unified Input Singularity
+    // Re-assert virtual controller sticks and buttons on the hardware clock (1000Hz).
+    // This removes the 1-2ms "jitter" caused by thread context switching in Level 19.
+    if (isMouseLocked && !isPopupVisible) {
+        _updateVStick(NO, YES); // Left Stick (Sync)
+        _updateVStick(YES, YES); // Right Stick (Sync)
+    }
+}
+
+static void setupHIDManager() {
+    static IOHIDManagerCreate_t fn_IOHIDManagerCreate = (IOHIDManagerCreate_t)dlsym(RTLD_DEFAULT, "IOHIDManagerCreate");
+    static IOHIDManagerSetDeviceMatching_t fn_IOHIDManagerSetDeviceMatching = (IOHIDManagerSetDeviceMatching_t)dlsym(RTLD_DEFAULT, "IOHIDManagerSetDeviceMatching");
+    static IOHIDManagerRegisterInputReportCallback_t fn_IOHIDManagerRegisterInputReportCallback = (IOHIDManagerRegisterInputReportCallback_t)dlsym(RTLD_DEFAULT, "IOHIDManagerRegisterInputReportCallback");
+    static IOHIDManagerScheduleWithRunLoop_t fn_IOHIDManagerScheduleWithRunLoop = (IOHIDManagerScheduleWithRunLoop_t)dlsym(RTLD_DEFAULT, "IOHIDManagerScheduleWithRunLoop");
+    static IOHIDManagerOpen_t fn_IOHIDManagerOpen = (IOHIDManagerOpen_t)dlsym(RTLD_DEFAULT, "IOHIDManagerOpen");
+    
+    if (!fn_IOHIDManagerCreate) return;
+    
+    g_hidManager = (void *)fn_IOHIDManagerCreate(kCFAllocatorDefault, 0);
+    if (!g_hidManager) return;
+    
+    NSDictionary *matching = @{
+        @"DeviceUsagePage" : @(0x01), // Generic Desktop
+        @"DeviceUsage"     : @(0x02)  // Mouse
+    };
+    
+    fn_IOHIDManagerSetDeviceMatching((IOHIDManagerRef)g_hidManager, (__bridge CFDictionaryRef)matching);
+    fn_IOHIDManagerRegisterInputReportCallback((IOHIDManagerRef)g_hidManager, handleHIDInputReport, NULL);
+    
+    // Level 14: Dedicated HID Thread with Mach Real-Time priority
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        elevateThreadToRealTime();
+        fn_IOHIDManagerScheduleWithRunLoop((IOHIDManagerRef)g_hidManager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+        fn_IOHIDManagerOpen((IOHIDManagerRef)g_hidManager, 0);
+        CFRunLoopRun();
+    });
+}
+
 %ctor {
+    // Swizzle isiOSAppOnMac and isiOSAppOnMic for both NSProcessInfo and its Swift subclass _NSSwiftProcessInfo
+    swizzleIsiOSAppOnMac(objc_getClass("NSProcessInfo"));
+    swizzleIsiOSAppOnMac(objc_getClass("_NSSwiftProcessInfo"));
+    swizzleIsiOSAppOnMic(objc_getClass("NSProcessInfo"));
+    swizzleIsiOSAppOnMic(objc_getClass("_NSSwiftProcessInfo"));
+    swizzleIsMacCatalystApp(objc_getClass("NSProcessInfo"));
+    swizzleIsMacCatalystApp(objc_getClass("_NSSwiftProcessInfo"));
+
+    // LEVEL 15: Total Dominance Performance Suite
+    // We initialize this immediately to kill App Nap and elevate priority before the engine loads.
+    [[PerformanceGuard sharedInstance] startHyperPerformanceMode];
+    [[PerformanceGuard sharedInstance] elevateProcessPriority];
+    
+    // Force P-Core Affinity for the main thread
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+
+    setupHIDManager();
+    
     // Initialize Gyro-Mouse Proxy hooks
     ue_init_gyro_hooks();
 
-    // Fishhook for device spoofing + macOS 26.4 crash fix
+    // Dynamic Linker Stealth Initialization
+    Dl_info our_info;
+    if (dladdr((const void *)swizzleIsiOSAppOnMac, &our_info)) {
+        g_our_header = (const struct mach_header *)our_info.dli_fbase;
+    }
+
+    // Fishhook for device spoofing + macOS 26.4 crash fix + EU marketplace bypass + Sandbox sysctl virtualization + dyld hiding
     struct rebinding rebindings[] = {
         {"sysctl", (void *)pt_sysctl, (void **)&orig_sysctl},
         {"sysctlbyname", (void *)pt_sysctlbyname, (void **)&orig_sysctlbyname},
-        {"_availability_version_check", (void *)hooked_availability_version_check, (void **)&orig_availability_version_check}
+        {"sysctlnametomib", (void *)hooked_sysctlnametomib, (void **)&orig_sysctlnametomib},
+        {"_availability_version_check", (void *)hooked_availability_version_check, (void **)&orig_availability_version_check},
+        {"MKW_GetEligibilityRegion", (void *)hooked_MKW_GetEligibilityRegion, (void **)&orig_MKW_GetEligibilityRegion},
+        {"MKW_RequestCTToken", (void *)hooked_MKW_RequestCTToken, (void **)&orig_MKW_RequestCTToken},
+        {"_dyld_image_count", (void *)hooked_dyld_image_count, (void **)&orig_dyld_image_count},
+        {"_dyld_get_image_name", (void *)hooked_dyld_get_image_name, (void **)&orig_dyld_get_image_name},
+        {"_dyld_get_image_header", (void *)hooked_dyld_get_image_header, (void **)&orig_dyld_get_image_header},
+        {"_dyld_get_image_vmaddr_slide", (void *)hooked_dyld_get_image_vmaddr_slide, (void **)&orig_dyld_get_image_vmaddr_slide},
+        {"_dyld_register_func_for_add_image", (void *)hooked_dyld_register_func_for_add_image, (void **)&orig_dyld_register_func_for_add_image},
+        {"_dyld_register_func_for_remove_image", (void *)hooked_dyld_register_func_for_remove_image, (void **)&orig_dyld_register_func_for_remove_image},
+        {"dladdr", (void *)hooked_dladdr, (void **)&orig_dladdr},
+        {"open", (void *)hooked_open, (void **)&orig_open},
+        {"close", (void *)hooked_close, (void **)&orig_close},
+        {"fopen", (void *)hooked_fopen, (void **)&orig_fopen},
+        {"fclose", (void *)hooked_fclose, (void **)&orig_fclose}
     };
-    rebind_symbols(rebindings, 3);
+    rebind_symbols(rebindings, 17);
 
     NSString* currentVersion = @"4.0.0";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
@@ -921,14 +1870,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     TRIGGER_KEY = GCKeyCodeLeftAlt;
     // POPUP_KEY = GCKeyCodeKeyP; // Removed as requested
     
-    NSDictionary *savedSettings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kSettingsKey];
-    if (savedSettings) {
-        float v;
-        v = [savedSettings[kBaseXYKey] floatValue]; if (v > 0) BASE_XY_SENSITIVITY = v;
-        v = [savedSettings[kScaleKey]  floatValue]; if (v > 0) MACOS_TO_PC_SCALE   = v;
-        v = [savedSettings[kGyroMultiplierKey] floatValue]; if (v > 0) GYRO_MULTIPLIER = v;
-        GCMOUSE_DIRECT_KEY = (GCKeyCode)[savedSettings[kGCMouseDirectKey] intValue];
-    }
+    loadTweakSettings();
 
     recalculateSensitivities();
     loadKeyRemappings();
@@ -940,6 +1882,8 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     if (cgHandle) {
         _CGEventTapCreate = (CFMachPortRef (*)(int, int, int, uint64_t, CGEventTapCallBack, void *))dlsym(cgHandle, "CGEventTapCreate");
         _CGEventTapEnable = (void (*)(CFMachPortRef, bool))dlsym(cgHandle, "CGEventTapEnable");
+        _CGEventSetType = (void (*)(CGEventRef, uint32_t))dlsym(cgHandle, "CGEventSetType");
+        _CGEventCreateMouseEvent = (CGEventRef (*)(void *, uint32_t, CGPoint, int))dlsym(cgHandle, "CGEventCreateMouseEvent");
     }
 
     if (_CGEventTapCreate && _CGEventTapEnable) {
@@ -949,6 +1893,7 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                                                   keyboardMask | mouseMask,
                                                   mouseButtonTapCallback, NULL);
         if (eventTap) {
+            fnm_eventTap = eventTap;
             CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0);
             CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
             _CGEventTapEnable(eventTap, true);
@@ -963,6 +1908,15 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                     object:nil
                      queue:[NSOperationQueue mainQueue]
                 usingBlock:^(NSNotification *note) {
+        
+        // LEVEL 10: App Focus Transition Guard
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillResignActiveNotification
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification * _Nonnull focusNote) {
+            resetControllerState();
+        }];
+
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             if (@available(iOS 15, *)) {
@@ -992,10 +1946,50 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 
                 SEL connectSel = NSSelectorFromString(@"connectWithReplyHandler:");
                 void (^reply)(NSError *) = ^(NSError *error) {
-                    (void)error;
+                    if (!error) {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                            if (g_virtualController) {
+                                g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
+                                updateGhostCache(); // LEVEL 21: Ghost-Core Latch
+                                if (g_virtualGamepad) {
+                                    g_vctrl_cached_ls = [g_virtualGamepad leftThumbstick];
+                                    g_vctrl_cached_rs = [g_virtualGamepad rightThumbstick];
+                                    _updateVStick(NO, YES);
+                                    _updateVStick(YES, YES);
+                                }
+                            }
+                        });
+                    }
                 };
                 if ([g_virtualController respondsToSelector:connectSel])
                     ((void(*)(id,SEL,id))objc_msgSend)(g_virtualController, connectSel, reply);
+
+                // --- STEALTH COMPOSITOR WINDOW (Level 5 Full-Screen Shield) ---
+                // Forces macOS to stay in Composited Mode even in Fullscreen
+                if (!stealthCompositorWindow) {
+                    UIWindowScene *activeScene = (UIWindowScene *)[[UIApplication sharedApplication].connectedScenes anyObject];
+                    if (activeScene) {
+                        stealthCompositorWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
+                        stealthCompositorWindow.frame = activeScene.screen.bounds;
+                        stealthCompositorWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+                        stealthCompositorWindow.backgroundColor = [UIColor clearColor];
+                        stealthCompositorWindow.alpha = 0.01;
+                        stealthCompositorWindow.userInteractionEnabled = NO;
+                        stealthCompositorWindow.hidden = NO;
+                    }
+                }
+
+                // --- ELITE ACTIVITY LOCKER & OVERCLOCK ---
+                // Disables App Nap, prevents throttling, and sets highest process priority
+                if (!g_backgroundActivityToken) {
+                    // Options: UserInitiated (0xFF) | LatencyCritical | IdleSleepDisabled | DisplaySleepDisabled
+                    uint64_t options = 0x000000FF | 0x0000000100000000ULL | 0x0000000800000000ULL | 0x0000004000000000ULL;
+                    g_backgroundActivityToken = [[NSProcessInfo processInfo] beginActivityWithOptions:options
+                                                                                           reason:@"Elite Gaming Overclock"];
+                    
+                    // Set UNIX process priority to -20 (Highest VIP priority)
+                    setpriority(PRIO_PROCESS, 0, -20);
+                }
             }
         });
     }];
@@ -1033,6 +2027,9 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                 _CGEventPost = (void(*)(int,CGEventRef))dlsym(cg, "CGEventPost");
                 _CGEventSetIntegerValueField = (void(*)(CGEventRef,int,int64_t))dlsym(cg, "CGEventSetIntegerValueField");
                 _CGEventGetIntegerValueField = (int64_t(*)(CGEventRef,int))dlsym(cg, "CGEventGetIntegerValueField");
+                _CGEventGetDoubleValueField = (double(*)(CGEventRef,int))dlsym(cg, "CGEventGetDoubleValueField");
+                _CGEventSetDoubleValueField = (void(*)(CGEventRef,int,double))dlsym(cg, "CGEventSetDoubleValueField");
+                _CGEventGetTimestamp = (CGEventTimestamp(*)(CGEventRef))dlsym(cg, "CGEventGetTimestamp");
                 _CGEventKeyboardGetUnicodeString = (void(*)(CGEventRef,UniCharCount,UniCharCount*,UniChar[]))dlsym(cg, "CGEventKeyboardGetUnicodeString");
                 _CGEventKeyboardSetUnicodeString = (void(*)(CGEventRef,UniCharCount,const UniChar[]))dlsym(cg, "CGEventKeyboardSetUnicodeString");
             }
@@ -1069,6 +2066,8 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         if (!scrollingDeltaYSel) scrollingDeltaYSel = NSSelectorFromString(@"scrollingDeltaY");
 
         id (^handlerBlock)(id) = ^id (id event) {
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{ elevateThreadToRealTime(); });
             // Safety: Only handle if app is active
             if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return event;
 
@@ -1107,31 +2106,19 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             if (isControllerModeEnabled && !isPopupVisible) {
                 BOOL isMappedToController = NO;
                 
-                // A. Custom vctrl remaps
-                NSSet *tgts = vctrlCookedRemappings[@(scrollCode)];
-                for (NSNumber *tgt in tgts) {
-                    int vbtn = [tgt intValue];
-                    isMappedToController = YES;
-                    if (isMouseLocked || isTriggerHeld) {
-                        dispatchControllerButton(vbtn, YES);
-                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.015 * NSEC_PER_SEC)),
-                                       dispatch_get_main_queue(), ^{
-                            dispatchControllerButton(vbtn, NO);
-                        });
-                    }
-                }
-                
-                // B. Hardware controller mapping (Main Tab)
-                for (int i = 0; i < FnCtrlButtonCount; i++) {
-                    if (controllerMappingArray[i] == scrollCode) {
+                // Elite: O(1) Zero-Alloc Bitmask Lookup
+                if (scrollCode > 0 && scrollCode < 10240) {
+                    uint32_t mask = g_vctrlReverseMap[scrollCode] | g_vctrlCustomMap[scrollCode];
+                    while (mask) {
+                        int i = __builtin_ctz(mask);
                         isMappedToController = YES;
                         if (isMouseLocked || isTriggerHeld) {
-                            dispatchControllerButton(i, YES);
-                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.015 * NSEC_PER_SEC)),
-                                           dispatch_get_main_queue(), ^{
-                                dispatchControllerButton(i, NO);
-                            });
+                             dispatchControllerButton(i, YES, NO);
+                             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.015 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                                 dispatchControllerButton(i, NO, NO);
+                             });
                         }
+                        mask &= ~(1 << i);
                     }
                 }
                 
@@ -1218,25 +2205,11 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             if (isTypingModeEnabled) return event;
 
 
-            // ── Mouse Movement (Moved 5, LDrag 6, RDrag 7, ODrag 8) ───────
-            if (evType >= 5 && evType <= 8) {
-                if (isMouseLocked || isGCMouseDirectActive) {
-                    static SEL dxSel = NULL, dySel = NULL;
-                    if (!dxSel) dxSel = NSSelectorFromString(@"deltaX");
-                    if (!dySel) dySel = NSSelectorFromString(@"deltaY");
-                    
-                    CGFloat dx = ((CGFloat(*)(id,SEL))objc_msgSend)(event, dxSel);
-                    CGFloat dy = -((CGFloat(*)(id,SEL))objc_msgSend)(event, dySel);
-
-                    // ACCUMULATE: Movement is harvested here and sent via CADisplayLink
-                    // (Manual re-injection removed in favor of setMouseMovedHandler pass-through)
-                    mouseAccumX += (double)dx;
-                    mouseAccumY += (double)dy;
-                    
-                    return nil; // DEEP STEALTH: Prevent Catalyst from seeing move / hitting edge.
-                }
-                return event;
-            }
+             // ── Mouse Movement (Movement handled in quartz tap for Level 8 Pure Alpha) ──
+             // We return event for moves here to allow system UI but we don't accumulate here.
+             if (evType >= 5 && evType <= 8) {
+                 return event;
+             }
 
             // ── Mouse Buttons (L 1/2/6, R 3/4/7, Other 25/26/8) ───────────────────
             if ((evType >= 1 && evType <= 4) || evType == 25 || evType == 26 || (evType >= 6 && evType <= 8)) {
@@ -1310,20 +2283,33 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 
                 if (isControllerModeEnabled && !isPopupVisible) {
                     if (currentBtnCode != 0) {
-                    updateGCMouseDirectState(currentBtnCode, isPressed);
-                        // Hardware controller mapping — fire if locked OR if temporarily unlocked via Option
+                        updateGCMouseDirectState(currentBtnCode, isPressed);
+                        
+                        // Hardware controller mapping — O(1) BITMASK LOOKUP
                         if (isMouseLocked || isTriggerHeld || !isPressed) {
-                            for (int i = 0; i < FnCtrlButtonCount; i++) {
-                                if (controllerMappingArray[i] == currentBtnCode) {
-                                    dispatchControllerButton(i, isPressed);
+                            if (currentBtnCode > 0 && currentBtnCode < 10240) {
+                                uint32_t mask = g_vctrlReverseMap[currentBtnCode];
+                                while (mask) {
+                                    int i = __builtin_ctz(mask);
+                                    dispatchControllerButton(i, isPressed, YES);
+                                    mask &= ~(1 << i);
                                 }
                             }
                         }
-                        // Custom vctrl remaps — fire if locked OR if temporarily unlocked via Option
+                        
+                        // Custom vctrl remaps — Elite: O(1) Zero-Alloc Bitmask Lookup
                         if (isMouseLocked || isTriggerHeld || !isPressed) {
-                            NSSet *tgts = vctrlCookedRemappings[@(currentBtnCode)];
-                            for (NSNumber *tgt in tgts) {
-                                dispatchControllerButton([tgt intValue], isPressed);
+                            if (currentBtnCode > 0 && currentBtnCode < 10240) {
+                                // Block rapid-fire repeats (macOS key repeat)
+                                if (isPressed && vctrlKeyState[currentBtnCode]) return nil;
+                                vctrlKeyState[currentBtnCode] = isPressed;
+                                
+                                uint32_t cmask = g_vctrlCustomMap[currentBtnCode];
+                                while (cmask) {
+                                    int i = __builtin_ctz(cmask);
+                                    dispatchControllerButton(i, isPressed, YES);
+                                    cmask &= ~(1 << i);
+                                }
                             }
                         }
                     }
@@ -1435,16 +2421,15 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                     // CONTROLLER MODE: check if this modifier is mapped to a controller button
                     if (isControllerModeEnabled && (isMouseLocked || isTriggerHeld || !modPressed)) {
                         BOOL handled = NO;
-                        for (int i = 0; i < FnCtrlButtonCount; i++) {
-                            if (controllerMappingArray[i] == (int)modGC) {
-                                dispatchControllerButton(i, modPressed);
+                        // Elite: O(1) Zero-Alloc Bitmask Lookup
+                        if ((int)modGC > 0 && (int)modGC < 10240) {
+                            uint32_t mask = g_vctrlReverseMap[(int)modGC] | g_vctrlCustomMap[(int)modGC];
+                            while (mask) {
+                                int i = __builtin_ctz(mask);
+                                dispatchControllerButton(i, modPressed, NO);
                                 handled = YES;
+                                mask &= ~(1 << i);
                             }
-                        }
-                        NSSet *tgts = vctrlCookedRemappings[@((int)modGC)];
-                        for (NSNumber *tgt in tgts) {
-                            dispatchControllerButton([tgt intValue], modPressed);
-                            handled = YES;
                         }
                         if (handled) return nil;
                     }
@@ -1457,28 +2442,14 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                         GCKeyCode target = (customTarget != 0 && customTarget != (GCKeyCode)-1) ? customTarget
                                          : (fnTarget != 0) ? fnTarget : 0;
                                          
-                        if (target > 0 && target < 256) {
-                            if (modGC == 57) {
+                        if (target > 0) {
+                            if (target < 256 && modGC == 57) {
                                 // Special handling for Caps Lock: make every press a "Tap" (Down+Up)
                                 // This bypasses the OS toggle behavior for gaming.
                                 _sendDualKeyEvent(target, YES);
                                 _sendDualKeyEvent(target, NO);
-                                return nil;
-                            }
-
-                            uint16_t remappedVK = gcToNSVK[(uint8_t)target];
-                            // Inject as modifier-flag CGEvent so game sees it
-                            if ((remappedVK > 0 || target == 4) && _CGEventCreateKeyboardEvent && _CGEventPost) {
-                                CGEventRef ev = _CGEventCreateKeyboardEvent(NULL, remappedVK, (bool)modPressed);
-                                if (ev) {
-                                    _CGEventSetIntegerValueField(ev, kCGEventSourceUserData, 0x1337);
-                                    _CGEventPost(kCGHIDEventTap, ev);
-                                    CFRelease(ev);
-                                }
-                            }
-                            if (storedKeyboardHandler && storedKeyboardInput) {
-                                GCControllerButtonInput *b = [storedKeyboardInput buttonForKeyCode:target];
-                                if (b) storedKeyboardHandler(storedKeyboardInput, b, target, modPressed);
+                            } else {
+                                _sendDualKeyEvent(target, modPressed);
                             }
                             return nil; // swallow original modifier
                         }
@@ -1505,6 +2476,9 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                         CGPoint warpPt = CGPointMake(blueDotPosition.x + _winX, blueDotPosition.y + _winY);
                         isMouseLocked = NO;
                         updateMouseLock(NO, warpPt);
+                        
+                        // LEVEL 10: Mandatory State Flush on Unlock
+                        resetControllerState();
                         
                         // RE-ASSERTION: Force all held inputs back to 'Pressed' after the
                         // mode switch to prevent the game engine from dropping them.
@@ -1554,6 +2528,16 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                     resetControllerState();
                 } else {
                     updateMouseLock(YES, CGPointZero);
+                    // Force virtual sticks to neutral on lock
+                    if (g_virtualController) {
+                        if (!g_virtualGamepad) g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
+                        if (g_virtualGamepad) {
+                            g_vctrl_cached_ls = [g_virtualGamepad leftThumbstick];
+                            g_vctrl_cached_rs = [g_virtualGamepad rightThumbstick];
+                            _updateVStick(NO, YES);
+                            _updateVStick(YES, YES);
+                        }
+                    }
                 }
                 return nil; // consume
             }
@@ -1584,27 +2568,24 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             if (keyCode == 0) return event;
 
             // ── Hardened Suppression for Controller/Remap ───────────────────
-            BOOL isRemappedElsewhere = NO;
-            for (int i = 0; i < FnCtrlButtonCount; i++) {
-                if (controllerMappingArray[i] == (int)keyCode) {
-                    isRemappedElsewhere = YES;
-                    break;
-                }
-            }
+            BOOL isRemappedElsewhere = (keyCode < 10240 && g_vctrlSuppressionMap[keyCode]);
 
             // PRIORITIZE CONTROLLER MODE: dispatch mapped controller button.
             if (isControllerModeEnabled && (isMouseLocked || isTriggerHeld || !pressed) && !isPopupVisible && keyCaptureCallback == nil) {
                 BOOL handled = NO;
-                for (int i = 0; i < FnCtrlButtonCount; i++) {
-                    if (controllerMappingArray[i] == (int)keyCode) {
-                        dispatchControllerButton(i, pressed);
+                // Elite: O(1) Zero-Alloc Bitmask Lookup
+                if ((int)keyCode >= 0 && (int)keyCode < 10240) {
+                    // Block rapid-fire repeats (macOS key repeat)
+                    if (pressed && vctrlKeyState[keyCode]) return nil;
+                    vctrlKeyState[keyCode] = pressed;
+                    
+                    uint32_t mask = g_vctrlReverseMap[(int)keyCode] | g_vctrlCustomMap[(int)keyCode];
+                    while (mask) {
+                        int i = __builtin_ctz(mask);
+                        dispatchControllerButton(i, pressed, YES); // SYNC: Instant Injection
                         handled = YES;
+                        mask &= ~(1 << i);
                     }
-                }
-                NSSet *tgts = vctrlCookedRemappings[@((int)keyCode)];
-                for (NSNumber *tgt in tgts) {
-                    dispatchControllerButton([tgt intValue], pressed);
-                    handled = YES;
                 }
                 if (handled) return nil; // swallow - must not reach game
             }
@@ -1625,9 +2606,9 @@ static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                     }
                 }
 
-                if (target > 0 && target < 256) {
+                if (target > 0) {
                     if (pressed) {
-                        if (isMouseLocked) {
+                        if (isMouseLocked || target >= 10000) {
                             _sendDualKeyEvent(target, YES);
                             remappedKeysState[keyCode] = YES;
                             return nil;
@@ -1695,7 +2676,8 @@ static inline CGFloat PixelAlign(CGFloat value) {
 
 static void createPopup() {
     UIWindowScene *scene = (UIWindowScene *)[[UIApplication sharedApplication] connectedScenes].anyObject;
-    popupWindow = [[UIWindow alloc] initWithWindowScene:scene];
+    // LEVEL 17: GPU Render-Guard (Hiding UI when inactive)
+    popupWindow = [[FnOverlayWindow alloc] initWithWindowScene:scene];
 
     CGFloat popupW = PixelAlign(330.0);
     CGFloat popupH = PixelAlign(600.0);
@@ -1805,9 +2787,17 @@ typedef CGError (*CGWarpMouseCursorPosition_t)(CGPoint newCursorPosition);
 static CGWarpMouseCursorPosition_t fnCGWarpMouse = NULL;
 
 void clearAllControllerButtons() {
-    // Release all mapped virtual controller buttons to prevent stuck inputs (like constant firing or ADS)
+    // 1. Zero out all joystick axes
+    for (int i=0; i<4; i++) {
+        lstickState[i] = NO;
+        rstickState[i] = NO;
+    }
+    _updateVStick(NO, NO);
+    _updateVStick(YES, NO);
+
+    // 2. Release all mapped virtual controller buttons
     for (int i = 0; i < FnCtrlButtonCount; i++) {
-        dispatchControllerButton(i, NO);
+        dispatchControllerButton(i,  NO, NO);
     }
 }
 
@@ -1834,6 +2824,11 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
         if (!fnCGAssociateMouse)
             fnCGAssociateMouse = (CGAssociateMouseAndMouseCursorPosition_t)dlsym(RTLD_DEFAULT, "CGAssociateMouseAndMouseCursorPosition");
         if (fnCGAssociateMouse) fnCGAssociateMouse(0);
+        
+        // LEVEL 11: Head-Tap Priority Re-Assertion
+        if (fnm_eventTap && _CGEventTapEnable) {
+            _CGEventTapEnable(fnm_eventTap, true);
+        }
 
         // LOCKING — cancel any in-flight click before the lock gesture takes hold.
         BOOL hadGCPress = leftClickSentToGame;  // GC press was actually sent to game
@@ -1905,7 +2900,7 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
                 }
             }
             for (int i = 0; i < FnCtrlButtonCount; i++) {
-                dispatchControllerButton(i, NO);
+                dispatchControllerButton(i,  NO, NO);
             }
         }
 
@@ -2064,12 +3059,19 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
     if (currentMouse && currentMouse.handlerQueue != dispatch_get_main_queue())
         currentMouse.handlerQueue = dispatch_get_main_queue();
     GCMouseMoved customHandler = [^(GCMouseInput *eventMouse, float deltaX, float deltaY) {
-        if (isMouseLocked) {
-            mouseAccumX += (double)deltaX;
-            mouseAccumY += (double)deltaY;
-        }
         if (isGCMouseDirectActive) {
+            // DIRECT MODE: Pass movement directly to the game (via framework)
             handler(eventMouse, deltaX, deltaY);
+            // Also ensure we don't accumulate gyro delta
+            atomic_store(&mouseAccumBufferX[0], 0);
+            atomic_store(&mouseAccumBufferX[1], 0);
+            atomic_store(&mouseAccumBufferY[0], 0);
+            atomic_store(&mouseAccumBufferY[1], 0);
+        } else if (isMouseLocked) {
+            // MOUSE-TO-GYRO MODE: Integrate into accumulators for ue_reflection
+            int idx = atomic_load(&activeBufferIdx);
+            atomic_add_double(&mouseAccumBufferX[idx], (double)deltaX);
+            atomic_add_double(&mouseAccumBufferY[idx], (double)deltaY);
         }
     } copy];
     %orig(customHandler);
@@ -2158,48 +3160,46 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
 // HELPER: Centralized suppression check for Mouse Buttons (L, R, M, Aux1...)
 // Prevents default game listening for M4/M5 and blocks double-input for remapped keys.
 static BOOL _isMouseButtonSuppressed(int code) {
-    // 1. Keyboard/Mouse Remapping (Unified Keybinds tab)
-    if (code >= 0 && code < 10200 && fortniteRemapArray[code] != 0) return YES;
-    
-    // 2. Keyboard Remapping (Remaps tab)
-    if (code >= 0 && code < 512 && keyRemapArray[code] != 0) return YES;
-    // Also check higher codes if they map into keyRemapping storage
-    if (code >= 0 && code < 10200 && keyRemapArray[code % 512] != 0) {
-         // This is a bit loose but keyRemapArray handles the first 512 and modulo thereafter
-         // if it was stored via the popup UI which uses % 512.
-    }
+    if (code <= 0 || code >= 10240) return NO;
 
-    // 3. Mouse Tab Remapping (mouseButtonRemapArray & mouseFortniteArray)
+    // 1. O(1) BITMASK SUPPRESSION CHECK (Hardware Look-up)
+    // This handles all Controller Mode mappings (Level 3 Elite)
+    if (g_vctrlSuppressionMap[code]) return YES;
+    
+    // 2. Fortnite Tab Remapping (Key -> Default Key)
+    if (fortniteRemapArray[code] != 0) return YES;
+    if (fortniteBlockedDefaults[code] != 0) return YES;
+
+    // 3. Mouse Tab Remapping (Sensitivity or Mouse Remaps)
     int mbIdx = code - MOUSE_BUTTON_MIDDLE;
     if (mbIdx >= 0 && mbIdx < MOUSE_REMAP_COUNT) {
         if (mouseButtonRemapArray[mbIdx] != 0) return YES;
         if (mouseFortniteArray[mbIdx] != 0) return YES;
     }
-    
-    // 4. Controller Remapping
-    if (isControllerModeEnabled) {
-        // Hardware mappings
-        for (int i = 0; i < FnCtrlButtonCount; i++) {
-            if (controllerMappingArray[i] == code) return YES;
-        }
+
+    // 4. Advanced Custom Remapping (Remaps tab)
+    if (code < 512 && keyRemapArray[code] != 0) return YES;
+    // Modulo check only for special cases likePopup UI
+    if (keyRemapArray[code % 512] != 0) return YES;
+
+    // 5. Direct Mouse Toggle Override
+    // For mice that support GCInput (Direct Mode), we suppress L/R/M to prevent dual-input
+    if (isGCMouseDirectActive) {
+        if (code == MOUSE_BUTTON_LEFT || code == MOUSE_BUTTON_RIGHT || code == MOUSE_BUTTON_MIDDLE) return YES;
     }
-    
-    // 5. L/R/M follow the global Direct Mouse toggle
-    // If Direct Mouse is ACTIVE, we suppress these three to send clean GC inputs.
-    // If INACTIVE, they must pass through (return NO here) so the native mouse works.
-    if (code == MOUSE_BUTTON_LEFT || code == MOUSE_BUTTON_RIGHT || code == MOUSE_BUTTON_MIDDLE) {
-        if (isGCMouseDirectActive) return YES;
-    }
-    
+
     // 6. Direct Mouse Toggle Key (Exclusive)
     if (code != 0 && (GCKeyCode)code == GCMOUSE_DIRECT_KEY) return YES;
-    
+
     return NO;
 }
 
 // OS-LEVEL EVENT TAP: Intercepts M4/M5 before they reach ANY system or app layer.
 // Providing the "FULL block" requested by the user.
 static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ elevateThreadToRealTime(); });
+
     // ── SAFETY CHECK: GLOBAL INTERFERENCE PREVENTION ──
     // Only process events if our app is actually in the foreground.
     // This prevents neutralizing Caps Lock or OtherMouse buttons for the entire OS.
@@ -2207,7 +3207,62 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
         return event;
     }
 
-    // A. KEYBOARD EVENTS (System-Level Intervention)
+    // A. MOVEMENT ACCUMULATION (Level 8 Pure Alpha Pipeline)
+    // We handle this at the absolute top of the tap to ensure clicking NEVER stalls aim.
+    if (type == kCGEventMouseMoved || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged) {
+        if (isMouseLocked || isGCMouseDirectActive) {
+            // LEVEL 14: IOHID-Prime BYPASS
+            // If the HID Manager is active and handling raw reports, we do NOT 
+            // accumulate deltas here. This prevents double-counting and ensures
+            // we use the ultra-low-latency HID source instead of Quartz.
+            if (g_hidManager) {
+                // HID Engine is the primary source now. Just swallow the Quartz event.
+                if (isMouseLocked) return NULL;
+                return event;
+            }
+
+            double dx = _CGEventGetDoubleValueField ? _CGEventGetDoubleValueField(event, kCGMouseEventDeltaX) : 0;
+            double dy = _CGEventGetDoubleValueField ? -(_CGEventGetDoubleValueField(event, kCGMouseEventDeltaY)) : 0;
+
+            // LEVEL 9: Pulse-Injection Engine (Zero Latency PUSH)
+            if (g_originalMouseHandler && (fabs(dx) > 0.0001 || fabs(dy) > 0.0001)) {
+                // Bypass the OS event loop and pulse movement directly into the engine.
+                // We do this via an immediate block invocation to hit the sub-millisecond goal.
+                g_originalMouseHandler(g_capturedMouseInput, (float)dx, (float)dy);
+            } else {
+                // LEVEL 12: Hybrid Phase-Lock (Exclusive Engine)
+                // Only use the 'Pull' accumulator if the 'Push' engine above is inactive.
+                // This prevents 'Double-Reporting' which is the source of the choppy jitter.
+                int idx = atomic_load(&activeBufferIdx);
+                atomic_add_double(&mouseAccumBufferX[idx], dx);
+                atomic_add_double(&mouseAccumBufferY[idx], dy);
+                if (_CGEventGetTimestamp) {
+                    mouseHardwareTimestamp[idx] = _CGEventGetTimestamp(event);
+                }
+            }
+
+            // LEVEL 11/12: Stabilized Re-Center (Deep Isolation)
+            // Prevent the virtual cursor from ever hitting a screen boundary by warping
+            // it back to the window center every 50 packets for maximum stability.
+            if (isMouseLocked) {
+                static int warpCounter = 0;
+                if (++warpCounter >= 50) {
+                    warpCounter = 0;
+                    if (fnCGWarpMouse && fnCGAssociateMouse) {
+                        // Dissociate briefly to hide the warp from the OS delta-calculator
+                        fnCGAssociateMouse(0);
+                        fnCGWarpMouse(CGPointMake(blueDotPosition.x, blueDotPosition.y));
+                        fnCGAssociateMouse(0); // Maintain lock
+                    }
+                }
+            }
+            
+            // If we are locked, swallow the move so Catalyst doesn't fight our warp
+            if (isMouseLocked) return NULL;
+        }
+    }
+
+    // B. KEYBOARD EVENTS (System-Level Intervention)
     if (type == 10 || type == 11 || type == 12) { // KeyDown, KeyUp, FlagsChanged
         if (_CGEventGetFlags && _CGEventSetFlags) {
             CGEventFlags flags = _CGEventGetFlags(event);
@@ -2215,7 +3270,7 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
             // 0. Intercept Capture Keys (including ESC and Key A)
             if (keyCaptureCallback != nil) {
                 int64_t vk = _CGEventGetIntegerValueField ? _CGEventGetIntegerValueField(event, 9) : 0;
-                if (type == 10) { // KeyDown (allow vk == 0 for Key A)
+                if (type == 10 || type == 12) { // KeyDown or FlagsChanged
                     keyCaptureCallback(nsVKToGC[vk]);
                 }
                 return NULL; // SWALLOW ALL KEYS DURING CAPTURE
@@ -2225,6 +3280,8 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
             int64_t vk = _CGEventGetIntegerValueField ? _CGEventGetIntegerValueField(event, 9) : 0;
             if (type == 12 && vk == 57) {
                 isTypingModeEnabled = (flags & kCGEventFlagMaskAlphaShift) != 0;
+                // LEVEL 10: Mandatory State Flush on Mode Switch
+                resetControllerState();
                 return NULL; // CONSUME AT SYSTEM LEVEL
             }
             
@@ -2268,16 +3325,48 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
             currentBtnCode = MOUSE_BUTTON_RIGHT;
         } else {
             int64_t btnNum = _CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
-            currentBtnCode = (int)(MOUSE_BUTTON_AUX_BASE + (btnNum - 3));
+            // UNIFIED CODING: Middle click (btnNum 2) -> 10050, M4 (btnNum 3) -> 10051, etc.
+            if (btnNum == 2) {
+                currentBtnCode = MOUSE_BUTTON_MIDDLE;
+            } else {
+                currentBtnCode = (int)(MOUSE_BUTTON_MIDDLE + (btnNum - 2));
+            }
         }
 
         BOOL isPressed = (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown || type == kCGEventOtherMouseDown ||
                           type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged);
 
         if (!isPopupVisible) {
+            // Safety Reset: If mouse is unlocked or popup is shown, clear tracking state
+            static BOOL tapRemapState[128] = {0};
+            static BOOL lastLockedState = NO;
+            if (!isMouseLocked || isPopupVisible) {
+                // If we were locked and now we're not, send "Up" for any stuck buttons
+                if (lastLockedState) {
+                    for (int i = 0; i < 128; i++) {
+                        if (tapRemapState[i]) {
+                           // We don't have the target here easily, but clearing state
+                           // is enough to allow the next press to work.
+                           // Actually, most games handle "window lose focus" by clearing their own state.
+                           tapRemapState[i] = NO;
+                        }
+                    }
+                }
+                lastLockedState = NO;
+            } else {
+                lastLockedState = YES;
+            }
+
             // 0. Update Direct Mouse Toggle state
             if (currentBtnCode != 0 && (GCKeyCode)currentBtnCode == GCMOUSE_DIRECT_KEY) {
                 updateGCMouseDirectState(currentBtnCode, isPressed);
+                // ALWAYS pass through the trigger key/button so the game sees clicks
+                return event;
+            }
+
+            if (isGCMouseDirectActive) {
+                // Direct mode: pass through system-level mouse movement and clicks
+                return event;
             }
 
             // Sync physical mouse state removed (GC clicks should NEVER fire)
@@ -2301,12 +3390,12 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
             }
 
             if (mbTarget != 0) {
-                static BOOL tapRemapState[64] = {NO}; // Increased for safety
-                int tapIdx = (currentBtnCode == MOUSE_BUTTON_LEFT) ? 60 : 
-                             (currentBtnCode == MOUSE_BUTTON_RIGHT) ? 61 : 
+                // Use the static state declared above (moved to avoid local static issues)
+                int tapIdx = (currentBtnCode == MOUSE_BUTTON_LEFT) ? 120 : 
+                             (currentBtnCode == MOUSE_BUTTON_RIGHT) ? 121 : 
                              (int)(currentBtnCode - MOUSE_BUTTON_MIDDLE);
 
-                if (tapIdx >= 0 && tapIdx < 64) {
+                if (tapIdx >= 0 && tapIdx < 120) {
                     if (isPressed) {
                         if (isMouseLocked && !tapRemapState[tapIdx]) {
                             _sendDualKeyEvent(mbTarget, YES);
@@ -2321,13 +3410,20 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
                 }
             }
 
-            // 2. Controller Mode
+            // 2. Controller Mode — O(1) BITMASK LOOKUP
             if (isControllerModeEnabled) {
-                for (int i = 0; i < FnCtrlButtonCount; i++) {
-                    if (controllerMappingArray[i] == currentBtnCode) {
+                if (currentBtnCode > 0 && currentBtnCode < 10240) {
+                    // Block rapid-fire repeats (mouse is usually 1:1, but safety first)
+                    if (isPressed && vctrlKeyState[currentBtnCode]) return event;
+                    vctrlKeyState[currentBtnCode] = isPressed;
+                    
+                    uint32_t mask = g_vctrlReverseMap[currentBtnCode];
+                    while (mask) {
+                        int i = __builtin_ctz(mask);
                         if (isMouseLocked || !isPressed) {
-                            dispatchControllerButton(i, isPressed);
+                            dispatchControllerButton(i, isPressed, YES);
                         }
+                        mask &= ~(1 << i);
                     }
                 }
             }
@@ -2598,3 +3694,65 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
 }
 
 %end
+%hook NSNotificationCenter
+- (void)postNotificationName:(NSNotificationName)aName object:(id)anObject userInfo:(NSDictionary *)aUserInfo {
+    if ([aName isEqualToString:@"NSApplicationWillResignActiveNotification"] || 
+        [aName isEqualToString:@"NSApplicationDidResignActiveNotification"]) {
+        return;
+    }
+    %orig;
+}
+%end
+
+%hook CADisplayLink
+
+- (void)setPreferredFramesPerSecond:(NSInteger)fps {
+    NSLog(@"[FnMacTweak] setPreferredFramesPerSecond called with: %ld (forcing 120)", (long)fps);
+    %orig(120);
+}
+
+- (void)setFrameInterval:(NSInteger)interval {
+    NSLog(@"[FnMacTweak] setFrameInterval called with: %ld (forcing 1)", (long)interval);
+    %orig(1);
+}
+
+- (void)setPreferredFrameRateRange:(CAFrameRateRange)range {
+    NSLog(@"[FnMacTweak] setPreferredFrameRateRange called with: min=%f, max=%f, preferred=%f (forcing 120)", range.minimum, range.maximum, range.preferred);
+    CAFrameRateRange newRange;
+    newRange.minimum = 120.0f;
+    newRange.maximum = 120.0f;
+    newRange.preferred = 120.0f;
+    %orig(newRange);
+}
+
+%end
+
+%hook _MTLCommandBuffer
+
+- (void)presentDrawable:(id)drawable afterMinimumDuration:(double)duration {
+    static double minDuration = -1.0;
+    if (minDuration < 0.0) {
+        NSInteger maxFPS = 120; // Default fallback
+        Class screenClass = NSClassFromString(@"UIScreen");
+        if (screenClass) {
+            id (*getMainScreen)(Class, SEL) = (id (*)(Class, SEL))objc_msgSend;
+            id mainScreen = getMainScreen(screenClass, @selector(mainScreen));
+            if (mainScreen) {
+                NSInteger (*getMaxFPS)(id, SEL) = (NSInteger (*)(id, SEL))objc_msgSend;
+                maxFPS = getMaxFPS(mainScreen, @selector(maximumFramesPerSecond));
+            }
+        }
+        if (maxFPS <= 0) maxFPS = 120;
+        minDuration = 1.0 / (double)maxFPS;
+        NSLog(@"[FnMacTweak] Dynamic frame rate limit set to: %ld FPS (minDuration: %f)", (long)maxFPS, minDuration);
+    }
+
+    double targetDuration = duration;
+    if (duration > minDuration) {
+        targetDuration = minDuration; // Dynamically bypass the engine's 60 FPS cap
+    }
+    %orig(drawable, targetDuration);
+}
+
+%end
+

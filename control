@@ -2,7 +2,7 @@ Package: com.yourcompany.fnmactweak
 Name: FnMacTweak
 Version: 4.0.0
 Architecture: iphoneos-arm
-Description: FnMacTweak
+Description: FnMacTweak (Fortnite Mac Tweak)
 Author: KohlerVG
 Section: Tweaks
 Depends: mobilesubstrate (>= 0.9.5000)

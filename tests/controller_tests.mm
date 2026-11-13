@@ -70,8 +70,13 @@
 static NSArray *devices = @[];
 static NSString *GCControllerDidConnectNotification = @"Connected";
 static NSString *GCControllerDidDisconnectNotification = @"Disconnected";
+static NSString *GCControllerDidBecomeCurrentNotification = @"BecameCurrent";
+@class GCController;
+static void queueGameConnection(GCController *controller, BOOL connected);
+static void queueGameSelection(GCController *controller);
 @interface GCController : NSObject
 @property(strong) GCExtendedGamepad *extendedGamepad;
+@property NSInteger gamePlayerIndex;
 + (NSArray *)controllers;
 @end
 @implementation GCController
@@ -97,6 +102,7 @@ static NSString *GCControllerDidDisconnectNotification = @"Disconnected";
 - (void)connectWithReplyHandler:(void (^)(NSError *))reply { self.connects++; self.reply = reply; }
 - (void)disconnect {
     self.disconnects++;
+    queueGameConnection(self.controller, NO);
     NSMutableArray *remaining = [devices mutableCopy];
     [remaining removeObject:self.controller]; devices = remaining;
     self.controller = nil;
@@ -153,11 +159,123 @@ static void finishConnect(BOOL fail) {
     GCVirtualController *vc = g_virtualController;
     if (!fail) {
         vc.controller = makeController(); devices = [devices arrayByAddingObject:vc.controller];
+        queueGameConnection(vc.controller, YES);
+        queueGameSelection(vc.controller);
     }
     void (^reply)(NSError *) = vc.reply; vc.reply = nil;
     assert(reply);
     reply(fail ? [NSError errorWithDomain:@"fixture" code:1 userInfo:nil] : nil);
     drain();
+}
+
+// Model the installed game's separate event queue and four controller slots.
+// Connect assigns a free slot; disconnect removes only that device. The current
+// event promotes an already registered device to local player 0. Merely removing
+// a virtual device does not promote the remaining physical device.
+static NSMutableArray *gameSlots, *gameEvents;
+static NSUInteger selectionNotifications;
+static void queueGameConnection(GCController *controller, BOOL connected) {
+    if (!gameEvents || !controller) return;
+    [gameEvents addObject:[^{
+        if (connected) {
+            for (NSUInteger i = 0; i < gameSlots.count; i++) {
+                if (gameSlots[i] == NSNull.null) {
+                    gameSlots[i] = controller;
+                    controller.gamePlayerIndex = i;
+                    break;
+                }
+            }
+        } else {
+            for (NSUInteger i = 0; i < gameSlots.count; i++) {
+                if (gameSlots[i] == controller) gameSlots[i] = NSNull.null;
+            }
+        }
+    } copy]];
+}
+static void queueGameSelection(GCController *controller) {
+    if (!gameEvents || !controller) return;
+    [gameEvents addObject:[^{
+        NSInteger previousIndex = -1;
+        for (id device in gameSlots) {
+            if (device == controller) {
+                previousIndex = controller.gamePlayerIndex;
+                if (previousIndex == 0) return;
+                controller.gamePlayerIndex = 0;
+            }
+        }
+        for (id device in gameSlots) {
+            if (device != NSNull.null && device != controller && [device gamePlayerIndex] == 0)
+                [device setGamePlayerIndex:previousIndex];
+        }
+    } copy]];
+}
+static void flushGameEvents(void) {
+    NSArray *events = [gameEvents copy]; [gameEvents removeAllObjects];
+    for (dispatch_block_t block in events) block();
+}
+static void deliverPhysicalNotification(GCController *controller, BOOL connected) {
+    handleControllerNotification([NSNotification notificationWithName:connected
+        ? GCControllerDidConnectNotification : GCControllerDidDisconnectNotification object:controller]);
+    // The game's original observer runs before the main-queue handoff block.
+    queueGameConnection(controller, connected);
+}
+static void testGameHandoff(void) {
+    fnSetVirtualControllerMode(FnVirtualControllerOff);
+    devices = @[];
+    gameSlots = [NSMutableArray arrayWithArray:@[NSNull.null, NSNull.null, NSNull.null, NSNull.null]];
+    gameEvents = [NSMutableArray new];
+    id observer = [[NSNotificationCenter defaultCenter]
+        addObserverForName:GCControllerDidBecomeCurrentNotification object:nil queue:nil
+        usingBlock:^(NSNotification *note) {
+            selectionNotifications++;
+            queueGameSelection(note.object);
+        }];
+    fnSetVirtualControllerMode(FnVirtualControllerAuto); finishConnect(NO); flushGameEvents();
+    GCController *physical = makeController();
+    [physical.extendedGamepad.buttonA _setValue:1];
+    NSUInteger valueCalls = physical.extendedGamepad.buttonA.valueCalls;
+    NSUInteger attempts = g_virtualController.connects;
+    deliverPhysicalNotification(physical, YES);
+    flushGameEvents();
+    assert(physical.gamePlayerIndex == 1); // Reproduces ignored local-player input.
+    drain(); flushGameEvents();
+    assert(physical.gamePlayerIndex == 0 && physical.extendedGamepad.buttonA.isPressed);
+    assert(physical.extendedGamepad.buttonA.valueCalls == valueCalls);
+    assert(!isControllerModeEnabled && !g_virtualControllerConnected && !g_virtualGamepad);
+    assert(g_virtualController.connects == attempts); // No virtual recovery pulse.
+    assert(selectionNotifications == 1);
+    assert([testDefaults integerForKey:kVirtualControllerModeKey] == FnVirtualControllerAuto);
+    deliverPhysicalNotification(physical, YES); // Duplicate event needs no handoff.
+    drain(); flushGameEvents(); assert(selectionNotifications == 1);
+    // Reconnect with the same object; a current event arriving before registration
+    // cannot select it. The deferred handoff must run after the connection event.
+    deliverPhysicalNotification(physical, NO);
+    drain(); finishConnect(NO); flushGameEvents();
+    queueGameSelection(physical);
+    deliverPhysicalNotification(physical, YES);
+    drain(); flushGameEvents();
+    assert(physical.gamePlayerIndex == 0 && selectionNotifications == 2);
+    // Physical arrival while a virtual connection is pending waits for teardown.
+    deliverPhysicalNotification(physical, NO); drain(); flushGameEvents();
+    assert(g_connectingVirtualController);
+    GCController *replacement = makeController();
+    deliverPhysicalNotification(replacement, YES); drain(); flushGameEvents();
+    assert(selectionNotifications == 2 && g_pendingPhysicalHandoff == replacement);
+    finishConnect(NO); flushGameEvents();
+    assert(selectionNotifications == 3 && replacement.gamePlayerIndex == 0);
+    assert(!g_virtualControllerConnected && !g_pendingPhysicalHandoff);
+    // Disconnect before the deferred selection invalidates it.
+    deliverPhysicalNotification(replacement, NO); drain(); finishConnect(NO); flushGameEvents();
+    deliverPhysicalNotification(replacement, YES);
+    dispatch_block_t refresh = pending.firstObject; [pending removeObjectAtIndex:0]; refresh();
+    deliverPhysicalNotification(replacement, NO); drain(); finishConnect(NO); flushGameEvents();
+    assert(selectionNotifications == 3);
+    // An explicit mode change also cancels the queued selection.
+    deliverPhysicalNotification(replacement, YES);
+    refresh = pending.firstObject; [pending removeObjectAtIndex:0]; refresh();
+    fnSetVirtualControllerMode(FnVirtualControllerOff);
+    drain(); flushGameEvents(); assert(selectionNotifications == 3);
+    [[NSNotificationCenter defaultCenter] removeObserver:observer];
 }
 int main(void) { @autoreleasepool {
     // Preferences are isolated so this test never changes the user's settings.
@@ -203,14 +321,53 @@ int main(void) { @autoreleasepool {
     NSUInteger suspendedAttempts = g_virtualController.connects;
     handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:g_ownedController]);
     drain(); assert(g_virtualController.connects == suspendedAttempts);
-    // Disconnecting one of multiple physical controllers keeps Auto suspended.
-    GCController *secondPhysical = makeController(); devices = @[secondPhysical];
+    // A disconnect notification is authoritative even if enumeration is stale.
+    assert([devices containsObject:physical]);
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:physical]);
+    drain(); assert(g_connectingVirtualController && !isControllerModeEnabled);
+    finishConnect(NO);
+    assert(isControllerModeEnabled && fnShouldSynthesizeMouseMotion());
+    // Reconnecting the same object is authoritative before it appears in the list.
+    devices = @[g_ownedController];
+    NSUInteger handoffAttempts = g_virtualController.connects;
+    NSUInteger handoffDisconnects = g_virtualController.disconnects;
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidConnectNotification object:physical]);
+    drain(); assert(!isControllerModeEnabled && !g_virtualGamepad && !g_connectingVirtualController);
+    assert(g_virtualController.connects == handoffAttempts);
+    assert(g_virtualController.disconnects == handoffDisconnects + 1);
+    // Duplicate physical notifications must not generate another cycle.
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidConnectNotification object:physical]);
+    drain(); assert(!g_connectingVirtualController);
+    devices = @[physical];
+    // Disconnecting one of multiple controllers keeps Auto suspended, including
+    // a new controller whose connect notification precedes enumeration.
+    GCController *secondPhysical = makeController();
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidConnectNotification object:secondPhysical]);
+    drain();
     handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:physical]);
     drain(); assert(!isControllerModeEnabled);
-    devices = @[];
+    devices = @[physical, secondPhysical];
     handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:secondPhysical]);
     drain(); finishConnect(NO);
     assert(isControllerModeEnabled && fnShouldSynthesizeMouseMotion());
+    // Repeated refreshes must not resurrect disconnected objects in a stale list.
+    fnRefreshVirtualController();
+    assert(isControllerModeEnabled && fnShouldSynthesizeMouseMotion());
+    // Reconnect may expose a fresh GCController instance while the old one lingers.
+    GCController *replacementPhysical = makeController();
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidConnectNotification object:replacementPhysical]);
+    drain();
+    assert(!isControllerModeEnabled);
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:replacementPhysical]);
+    drain(); assert(g_connectingVirtualController);
+    // Another arrival while virtual connect is pending cancels its completion.
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidConnectNotification object:replacementPhysical]);
+    drain(); finishConnect(NO); // Stale connection from before physical arrival.
+    assert(!isControllerModeEnabled && !g_virtualGamepad && !g_connectingVirtualController);
+    handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:replacementPhysical]);
+    drain(); finishConnect(NO);
+    assert(isControllerModeEnabled && fnShouldSynthesizeMouseMotion());
+    devices = @[g_ownedController];
     // An unexpected loss of the owned device starts one reconnect with fresh caches.
     GCController *lostController = g_ownedController;
     [g_virtualController disconnect];
@@ -243,6 +400,7 @@ int main(void) { @autoreleasepool {
     handleControllerNotification([NSNotification notificationWithName:GCControllerDidDisconnectNotification object:g_ownedController]);
     drain(); assert(g_virtualController.connects == failedAttempts);
     fnRefreshVirtualController(); finishConnect(NO); assert(isControllerModeEnabled);
+    testGameHandoff();
     [testDefaults removePersistentDomainForName:suite];
-    puts("Controller tests passed: isolation, deduplication, native motion policy, hotplug, cancellation, failure/retry.");
+    puts("Controller tests passed: isolation, deduplication, native motion policy, hotplug, native handoff, cancellation, failure/retry.");
 } }

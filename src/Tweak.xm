@@ -698,6 +698,35 @@ static BOOL g_hasOtherControllers = NO;
 static BOOL g_virtualControllerConnected = NO;
 static NSUInteger g_controllerRevision = 0;
 static GCController *g_ownedController = nil;
+// Notifications describe the transition even when GCController.controllers still
+// exposes the previous snapshot. Weak keys preserve that state without retaining
+// unplugged devices; pointer identity also allows a new device object on reconnect.
+static NSMapTable<GCController *, NSNumber *> *g_controllerConnectionStates = nil;
+static __weak GCController *g_pendingPhysicalHandoff = nil;
+static NSUInteger g_physicalHandoffRevision = 0;
+
+static void schedulePhysicalControllerHandoff(void) {
+    GCController *controller = g_pendingPhysicalHandoff;
+    if (!controller || g_connectingVirtualController || g_virtualControllerConnected) return;
+    NSUInteger revision = g_physicalHandoffRevision;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (revision != g_physicalHandoffRevision || g_pendingPhysicalHandoff != controller) return;
+        if (g_virtualControllerMode != FnVirtualControllerAuto) {
+            g_pendingPhysicalHandoff = nil;
+            return;
+        }
+        if (g_connectingVirtualController || g_virtualControllerConnected) return;
+        g_pendingPhysicalHandoff = nil;
+        if (![[g_controllerConnectionStates objectForKey:controller] boolValue]) return;
+        // Fortnite queues connection and current-device events separately. A
+        // physical device arriving while virtual input owns player 0 can remain
+        // assigned to another player after the virtual device disappears. Send
+        // the selection event after the original connect observers have run and
+        // virtual teardown has been issued. No physical values/handlers change.
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:GCControllerDidBecomeCurrentNotification object:controller];
+    });
+}
 
 static void setVirtualControllerStatus(NSString *status) {
     if ([g_virtualControllerStatus isEqualToString:status]) return;
@@ -734,9 +763,21 @@ void fnRefreshVirtualController(void) {
         GCVirtualController *virtualController = g_virtualController;
         g_hasOtherControllers = NO;
         for (GCController *controller in GCController.controllers) {
-            if (controller != virtualController.controller && controller != g_ownedController) {
+            NSNumber *connected = [g_controllerConnectionStates objectForKey:controller];
+            if (controller != virtualController.controller && controller != g_ownedController &&
+                (!connected || connected.boolValue)) {
                 g_hasOtherControllers = YES;
                 break;
+            }
+        }
+        // A connect notification can also arrive before enumeration includes it.
+        if (!g_hasOtherControllers) {
+            for (GCController *controller in g_controllerConnectionStates.keyEnumerator) {
+                if (controller != virtualController.controller && controller != g_ownedController &&
+                    [[g_controllerConnectionStates objectForKey:controller] boolValue]) {
+                    g_hasOtherControllers = YES;
+                    break;
+                }
             }
         }
         BOOL desired = g_virtualControllerMode == FnVirtualControllerOn ||
@@ -755,7 +796,8 @@ void fnRefreshVirtualController(void) {
                 [virtualController disconnect];
             }
             setVirtualControllerStatus(g_virtualControllerMode == FnVirtualControllerOff
-                ? @"Off — using native game input" : @"Auto — physical controller connected");
+                ? @"Off — use physical controller to play" : @"Auto — physical controller connected");
+            if (g_virtualControllerMode == FnVirtualControllerAuto) schedulePhysicalControllerHandoff();
             return;
         }
         if (isControllerModeEnabled) {
@@ -830,6 +872,10 @@ void fnSetVirtualControllerMode(FnVirtualControllerMode mode) {
         return;
     }
     if (mode < FnVirtualControllerAuto || mode > FnVirtualControllerOff) mode = FnVirtualControllerAuto;
+    if (mode != FnVirtualControllerAuto) {
+        g_pendingPhysicalHandoff = nil;
+        ++g_physicalHandoffRevision;
+    }
     g_virtualControllerMode = mode;
     [tweakDefaults() setInteger:mode forKey:kVirtualControllerModeKey];
     fnRefreshVirtualController();
@@ -849,6 +895,23 @@ static void handleControllerNotification(NSNotification *notification) {
         g_virtualControllerConnected = NO;
         ++g_controllerRevision;
         clearVirtualControllerCache();
+    } else if ([notification.object isKindOfClass:[GCController class]]) {
+        if (!g_controllerConnectionStates) {
+            g_controllerConnectionStates = [NSMapTable
+                mapTableWithKeyOptions:NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality
+                         valueOptions:NSPointerFunctionsStrongMemory];
+        }
+        BOOL connected = [notification.name isEqualToString:GCControllerDidConnectNotification];
+        BOOL wasConnected = [[g_controllerConnectionStates objectForKey:notification.object] boolValue];
+        [g_controllerConnectionStates setObject:@(connected)
+                                        forKey:notification.object];
+        if (connected && !wasConnected && g_virtualControllerMode == FnVirtualControllerAuto) {
+            g_pendingPhysicalHandoff = notification.object;
+            ++g_physicalHandoffRevision;
+        } else if (!connected && g_pendingPhysicalHandoff == notification.object) {
+            g_pendingPhysicalHandoff = nil;
+            ++g_physicalHandoffRevision;
+        }
     }
     dispatch_async(dispatch_get_main_queue(), ^{ fnRefreshVirtualController(); });
 }

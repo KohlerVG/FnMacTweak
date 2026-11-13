@@ -4261,13 +4261,6 @@ static NSString *getControllerButtonName(NSInteger idx) {
   y += 54;
   [self refreshVirtualControllerStatus];
 
-  UILabel *modeHelp = [[UILabel alloc] initWithFrame:CGRectMake(leftMargin, y, contentWidth, 48)];
-  modeHelp.text = @"Auto uses physical controllers when connected. On forces virtual input; Off uses native game input. Changes save immediately.";
-  modeHelp.textColor = [UIColor colorWithWhite:0.65 alpha:1.0];
-  modeHelp.font = [UIFont systemFontOfSize:11];
-  modeHelp.numberOfLines = 3;
-  [self.controllerTab addSubview:modeHelp];
-  y += 56;
 
   // ── Description banner — same green style ────────────────────────────────
   UIView *banner = [[UIView alloc]

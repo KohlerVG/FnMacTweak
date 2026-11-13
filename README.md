@@ -11,12 +11,12 @@ FnMacTweak is a [Theos](https://theos.dev) tweak for **Fortnite iOS running on A
 | Feature | Description |
 |---|---|
 | 🖱️ **Raw HID Mouse Pipeline** | **New in v5.0.0.** Mouse input is read directly from hardware at your mouse's native polling rate, bypassing the OS event system entirely for the lowest possible latency. |
-| 🎯 **Engine-Level Aim Hook** | **New in v5.0.0.** Camera aiming is injected directly into Unreal Engine's internal orientation function, with a sub-millisecond trajectory correction to compensate for OS input latency. |
+| 🎯 **Mouse Motion Compatibility** | Mouse aiming uses the gyro proxy only while virtual mouse input is active; native physical-controller motion passes through. |
 | ⚡ **Auto 120 FPS** | **New in v5.0.0.** Automatically corrects `GameUserSettings.ini` to enforce 120 FPS every time Fortnite rewrites the file. No more manual ini edits. |
 | 🛡️ **Stealth Suite** | **New in v5.0.0.** Full dyld image hiding, sysctl virtualization, and process introspection protection. |
 | 🌍 **EU Marketplace Support** | **New in v5.0.0.** Bypasses Epic's EU marketplace eligibility checks. |
 | 🎯 **Gyro-Mouse Proxy** | Zero-latency, demand-driven mouse synthesis via CoreMotion hooks. The smoothest aiming experience available. |
-| 🎮 **Controller Mode** | Full physical controller support (Xbox, PS5, etc.) with hardware remapping, **Advanced Virtual Controller Remaps**, and sensible default bindings out of the box. |
+| 🎮 **Controller Mode** | Native physical controller input with Auto/On/Off virtual-controller modes, keyboard/mouse-to-controller mappings, and **Advanced Virtual Controller Remaps**. |
 | 🖱️ **GCMouseInput Toggle** | Instant cursor lock/unlock with a dedicated key bind (Default: `` ` ``). |
 | ⌨️ **Typing Mode** | Press **Caps Lock** to instantly disable all keybinds and pass raw keyboard input to the game (for chat or searching). |
 | ⌨️ **Universal Remapping** | Map any key or mouse button to any Fortnite action or controller button with near-zero overhead. |
@@ -58,9 +58,9 @@ The resulting `.deb` will be in the `packages/` directory.
 
 ## 🎯 The Gyro-Mouse System
 
-FnMacTweak uses a **Demand-Driven Gyro Proxy** combined with a direct **Engine-Level Orientation Hook** for the lowest latency aiming possible.
+FnMacTweak uses a **Demand-Driven Gyro Proxy** for mouse aiming while the virtual controller is ready and mouse aiming is active.
 
-Standard mouse input in iOS wrappers often suffers from jitter or "staircasing". FnMacTweak bypasses this by hooking the game's CoreMotion rotation requests and injecting synthesized velocity data precisely when the engine asks for it. In v5.0.0, this is further reinforced by a direct hook into Unreal Engine's internal orientation function.
+The proxy answers eligible motion requests with synthesized mouse velocity. Physical controller motion retains its original implementation. The previous unscoped Unreal orientation interposition is disabled.
 
 - **Sensitivity Formula:** `(Base ÷ 100) × (Look% ÷ 100) × Scale × (Gyro Multiplier ÷ 100)`
 - **Pixel Perfection:** Sub-pixel mouse deltas are preserved and consumed at the game's polling rate.
@@ -70,12 +70,17 @@ Standard mouse input in iOS wrappers often suffers from jitter or "staircasing".
 
 ## 🎮 Controller Mode & Virtual Remaps
 
-FnMacTweak provides two powerful ways to use a controller:
+The **Controller** tab has a **Virtual Controller** selector that saves immediately:
 
-1. **Hardware Mapping**: Map your physical controller's buttons to other controller inputs.
-2. **Advanced Virtual Remaps**: Map keyboard keys or mouse buttons directly to controller inputs. This allows you to "spoof" a controller while using KBM, which can be useful for specific game configurations or accessibility.
+- **Auto** (default): use Fortnite’s native physical controller input when another controller is connected; reconnect the virtual controller when the last physical controller disconnects.
+- **On**: keep the virtual controller connected, including alongside physical controllers. Fortnite may still choose between devices.
+- **Off**: disconnect the virtual controller and stop controller-related keyboard/mouse suppression.
 
-Both systems come with **sensible default bindings out of the box** and operate with instant, immediate saving — no "Apply" step required.
+The status below the selector shows connection readiness or an error. Physical controller buttons, sticks, and gyro retain native input. Synthetic input and cleanup only target the tweak’s own virtual device.
+
+The mapping rows bind keyboard keys or mouse buttons to virtual controller inputs. Advanced Virtual Remaps provide additional source-to-controller bindings; these do not remap physical controller hardware. Mapping rows use **Apply Changes**, while advanced virtual remaps save immediately. Saved mappings remain available when virtual input is disabled. Older imported backups default to Auto.
+
+For physical controllers, use Auto and connect over Bluetooth or USB before launch or in the lobby. No controller power cycle should be needed; runtime compatibility still depends on Fortnite’s device handling.
 
 ---
 
@@ -85,7 +90,7 @@ Press **`P`** (default) in-game to open the settings panel.
 
 - **Sensitivity Tab**: Adjust mouse look speed, gyro multipliers, and the GCMouseInput Toggle key.
 - **Keyboard Tab**: Traditional keyboard-to-game mappings (Movement, Building, etc.).
-- **Controller Tab**: Manage physical controller mappings and virtual controller overrides.
+- **Controller Tab**: Choose Auto/On/Off and manage keyboard/mouse-to-controller mappings.
 - **Container Tab**: Grant the tweak access to Fortnite's data folder for advanced features.
 - **Quick Start Tab**: Tutorials and setup guides.
 

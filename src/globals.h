@@ -23,7 +23,16 @@
 #define kKeyRemapKey @"keyRemappings"
 #define kBlueDotPositionKey @"blueDotPosition"
 #define kBorderlessWindowKey @"fnmactweak.borderlessWindowEnabled"
-#define kControllerModeKey   @"fnmactweak.controllerModeEnabled"
+#define kVirtualControllerModeKey @"fnmactweak.virtualControllerMode"
+#define FnVirtualControllerStatusDidChangeNotification @"FnVirtualControllerStatusDidChange"
+
+typedef NS_ENUM(NSInteger, FnVirtualControllerMode) {
+    FnVirtualControllerAuto = 0,
+    FnVirtualControllerOn = 1,
+    FnVirtualControllerOff = 2,
+};
+extern FnVirtualControllerMode g_virtualControllerMode;
+extern NSString *g_virtualControllerStatus;
 #define kControllerMappingKey @"fnmactweak.controllerMappings"
 
 #define kGyroMultiplierKey @"gyroMultiplier"
@@ -195,6 +204,9 @@ extern dispatch_queue_t g_vctrl_queue;
 #ifdef __cplusplus
 extern "C" {
 #endif
+void fnSetVirtualControllerMode(FnVirtualControllerMode mode);
+void fnRefreshVirtualController(void);
+BOOL fnShouldSynthesizeMouseMotion(void);
 void recalculateSensitivities(void);
 void loadKeyRemappings(void);
 void loadTweakSettings(void);

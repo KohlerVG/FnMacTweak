@@ -90,22 +90,22 @@ id ue_get_thumbstick(id gamepad, NSString *element);
 // ---------------------------------------------------------------------------
 
 /**
- * Initialize Gyro-Mouse Proxy hooks (Call once at startup)
+ * Initialize scoped Gyro-Mouse Proxy hooks once at startup.
+ * Physical controller motion always uses the original framework implementation.
  */
 void ue_init_gyro_hooks(void);
 
 /**
  * ue_apply_gyro_velocity
  * 
- * Sets the current rotational velocity (radians/second).
- * This state is held and returned by the sensors until the next update.
+ * Legacy compatibility entry point. Mouse velocity is sampled on demand.
  */
 void ue_apply_gyro_velocity(double vx, double vy);
 
 /**
  * ue_reset_gyro_context
  * 
- * Resets the velocity state to zero.
+ * Clears accumulated mouse motion and starts a fresh polling interval.
  */
 void ue_reset_gyro_context(void);
 

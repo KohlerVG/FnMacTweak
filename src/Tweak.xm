@@ -273,58 +273,6 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync);
 static void _setVirtualFaceButton(NSString *element, BOOL pressed);
 static void _setVirtualNamedButton(SEL propSel, BOOL pressed);
 
-// LEVEL 21: Ghost-Core Cache (Zero-Search Dispatch)
-typedef struct {
-    __unsafe_unretained GCControllerButtonInput *btnA;
-    __unsafe_unretained GCControllerButtonInput *btnB;
-    __unsafe_unretained GCControllerButtonInput *btnX;
-    __unsafe_unretained GCControllerButtonInput *btnY;
-    __unsafe_unretained GCControllerButtonInput *l1;
-    __unsafe_unretained GCControllerButtonInput *r1;
-    __unsafe_unretained GCControllerButtonInput *l2;
-    __unsafe_unretained GCControllerButtonInput *r2;
-    __unsafe_unretained GCControllerButtonInput *l3;
-    __unsafe_unretained GCControllerButtonInput *r3;
-    __unsafe_unretained GCControllerButtonInput *menu;
-    __unsafe_unretained GCControllerButtonInput *options;
-    __unsafe_unretained GCControllerButtonInput *home;
-} FnControllerGhostCache;
-
-static FnControllerGhostCache g_ghostCache = {0};
-
-static void updateGhostCache() {
-    if (!g_virtualController) return;
-    GCExtendedGamepad *eg = (GCExtendedGamepad *)ue_get_extended_gamepad(g_virtualController);
-    if (!eg) return;
-
-    g_ghostCache.btnA = eg.buttonA;
-    g_ghostCache.btnB = eg.buttonB;
-    g_ghostCache.btnX = eg.buttonX;
-    g_ghostCache.btnY = eg.buttonY;
-    g_ghostCache.l1 = eg.leftShoulder;
-    g_ghostCache.r1 = eg.rightShoulder;
-    g_ghostCache.l2 = eg.leftTrigger;
-    g_ghostCache.r2 = eg.rightTrigger;
-    
-    // Thumbstick buttons (L3/R3)
-    if ([eg respondsToSelector:@selector(leftThumbstickButton)]) {
-        g_ghostCache.l3 = (GCControllerButtonInput *)[(id)eg performSelector:@selector(leftThumbstickButton)];
-    }
-    if ([eg respondsToSelector:@selector(rightThumbstickButton)]) {
-        g_ghostCache.r3 = (GCControllerButtonInput *)[(id)eg performSelector:@selector(rightThumbstickButton)];
-    }
-    
-    g_ghostCache.menu = eg.buttonMenu;
-    if ([eg respondsToSelector:@selector(buttonOptions)]) {
-        g_ghostCache.options = (GCControllerButtonInput *)[(id)eg performSelector:@selector(buttonOptions)];
-    }
-    if ([eg respondsToSelector:@selector(buttonHome)]) {
-        g_ghostCache.home = (GCControllerButtonInput *)[(id)eg performSelector:@selector(buttonHome)];
-    }
-    
-    NSLog(@"[FnMacTweak] Ghost-Core Cache Synchronized (L21)");
-}
-
 static char kButtonCodeKey;
 static UIWindow *stealthCompositorWindow = nil;
 static id g_backgroundActivityToken = nil;
@@ -641,38 +589,6 @@ static BOOL g_vctrlButtonTargetStates[FnCtrlButtonCount] = {NO};
         return;
     }
     wasLocked = YES;
-    
-    // ── Zero-Latency Gyro-Mouse Proxy (Demand-Driven) ──
-    // The actual calculation now happens in the reflection layer polling hook (ue_reflection.m).
-    // mouseAccumX/Y are consumed directly by the game engine's request.
-    
-    // --- Latch Virtual Gamepad ---
-    if (!g_virtualGamepad && g_virtualController) {
-        g_virtualGamepad   = ue_get_extended_gamepad(g_virtualController);
-        g_vctrl_cached_ls  = (g_virtualGamepad) ? [g_virtualGamepad leftThumbstick] : nil;
-        g_vctrl_cached_rs  = (g_virtualGamepad) ? [g_virtualGamepad rightThumbstick] : nil;
-    }
-    
-    // --- Gyro Suppression (Direct Mouse active) ---
-    if (isGCMouseDirectActive) {
-        ue_apply_gyro_velocity(0, 0);
-    }
-
-    // --- Sticky Buttons (Option Mode) ---
-    // If holding Option, the game might try to reset inputs during mode switches.
-    // We re-assert every pressed button to keep movement/actions continuous.
-    if (isTriggerHeld) {
-        for (int i = 0; i < FnCtrlButtonCount; i++) {
-            if (g_vctrlButtonTargetStates[i]) {
-                dispatchControllerButton(i,  YES, NO);
-            }
-        }
-    }
-
-    // --- Constant Stick Polling ---
-    // Update sticks every frame to ensure smooth movement even during transitions.
-    _updateVStick(NO, NO);
-    _updateVStick(YES, NO);
 }
 @end
 
@@ -694,58 +610,36 @@ static BOOL dpadState[4]   = {}; // up/down/left/right
 static BOOL lstickState[4] = {};
 static BOOL rstickState[4] = {};
 
-// Drive a face button (A/B/X/Y) — triple-fire: valueChangedHandler + pressedChangedHandler + _setValue:
-typedef void (*vctrl_set_value_t)(id, SEL, float);
-
-static void _setVirtualFaceButton(NSString *element, BOOL pressed) {
-    float val = pressed ? 1.0f : 0.0f;
-    for (GCController *ctrl in GCController.controllers) {
-        GCExtendedGamepad *eg = ctrl.extendedGamepad;
-        if (!eg) continue;
-
-        GCControllerButtonInput *btn = nil;
-
-        // 1. Try elementForName: (Modern and robust fallback for non-selector buttons)
-        if (element && [eg respondsToSelector:@selector(elementForName:)]) {
-            btn = (GCControllerButtonInput *)[(id)eg elementForName:element];
-        }
-
-        // 2. Fallback to selectors if elementForName failed or is unavailable
-        if (!btn || ![btn isKindOfClass:GCControllerButtonInput.class]) {
-            SEL propSel = nil;
-            if      ([element isEqualToString:@"Button A"])       propSel = @selector(buttonA);
-            else if ([element isEqualToString:@"Button B"])       propSel = @selector(buttonB);
-            else if ([element isEqualToString:@"Button X"])       propSel = @selector(buttonX);
-            else if ([element isEqualToString:@"Button Y"])       propSel = @selector(buttonY);
-            else if ([element isEqualToString:@"Menu"])           propSel = @selector(buttonMenu);
-            else if ([element isEqualToString:@"Options"])        propSel = @selector(buttonOptions);
-            else if ([element isEqualToString:@"Home"])           propSel = @selector(buttonHome);
-            
-            if (propSel && [eg respondsToSelector:propSel]) {
-                btn = ((id(*)(id,SEL))objc_msgSend)(eg, propSel);
-            }
-        }
-
-        if (!btn || ![btn isKindOfClass:GCControllerButtonInput.class]) continue;
-
-        // Elite Level 3: Zero-Overhead Injection (IMP Caching)
-        if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
-        if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-        
-        static SEL setValueSel = NULL;
-        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
-        
-        if ([btn respondsToSelector:setValueSel]) {
-            // Direct C-call to implementation pointer for absolute 0-delay.
-            vctrl_set_value_t imp = (vctrl_set_value_t)[btn methodForSelector:setValueSel];
-            if (imp) imp(btn, setValueSel, val);
-        }
+// All synthesis targets the owned virtual profile. Setters deliver callbacks;
+// manual callbacks are only a compatibility fallback when no setter exists.
+static void setVirtualButtonValue(GCControllerButtonInput *button, BOOL pressed) {
+    if (!button) return;
+    float value = pressed ? 1.0f : 0.0f;
+    SEL setter = NSSelectorFromString(@"_setValue:");
+    if ([button respondsToSelector:setter]) {
+        ((void (*)(id, SEL, float))objc_msgSend)(button, setter, value);
+    } else {
+        if (button.valueChangedHandler) button.valueChangedHandler(button, value, pressed);
+        if (button.pressedChangedHandler) button.pressedChangedHandler(button, value, pressed);
     }
 }
 
-// Drive a thumbstick from a digital direction state array
-// Iterates GCController.controllers and fires _setValueX:Y: / fallback on each
+static void _setVirtualFaceButton(NSString *element, BOOL pressed) {
+    if (!isControllerModeEnabled || !g_virtualGamepad) return;
+    SEL selector = NULL;
+    if ([element isEqualToString:GCInputButtonA]) selector = @selector(buttonA);
+    else if ([element isEqualToString:GCInputButtonB]) selector = @selector(buttonB);
+    else if ([element isEqualToString:GCInputButtonX]) selector = @selector(buttonX);
+    else if ([element isEqualToString:GCInputButtonY]) selector = @selector(buttonY);
+    else if ([element isEqualToString:@"Menu"]) selector = @selector(buttonMenu);
+    else if ([element isEqualToString:@"Options"]) selector = @selector(buttonOptions);
+    else if ([element isEqualToString:@"Home"]) selector = @selector(buttonHome);
+    _setVirtualNamedButton(selector, pressed);
+}
+
+// Drive only the owned virtual stick from its digital direction state.
 static void _updateVStick(BOOL isRight, BOOL isSync) {
+    if (!isControllerModeEnabled) return;
     id dpad = isRight ? g_vctrl_cached_rs : g_vctrl_cached_ls;
     if (!dpad) {
         if (g_virtualController) {
@@ -777,86 +671,186 @@ static void _updateVStick(BOOL isRight, BOOL isSync) {
     ue_reflect_thumbstick(dpad, dx, dy);
 }
 
-// Re-assert every currently pressed input to override game engine internal resets
-static void reassertAllInputs() {
-    for (int i = 0; i < FnCtrlButtonCount; i++) {
-        if (g_vctrlButtonTargetStates[i]) {
-            dispatchControllerButton(i,  YES, NO);
-        }
-    }
-    _updateVStick(NO, NO);
-    _updateVStick(YES, NO);
-}
-
 static void resetControllerState() {
-    // 1. Reset digital states
-    for (int i=0; i<4; i++) {
-        dpadState[i] = NO;
-        lstickState[i] = NO;
-        rstickState[i] = NO;
+    for (int i = 0; i < FnCtrlButtonCount; i++) {
+        dispatchControllerButton(i, NO, NO);
     }
-    
-    // 2. Force thumbsticks to neutral
-    _updateVStick(NO, NO);
-    _updateVStick(YES, NO);
-    
-    // 3. Reset all face and shoulder buttons
-    _setVirtualFaceButton((NSString *)GCInputButtonA, NO);
-    _setVirtualFaceButton((NSString *)GCInputButtonB, NO);
-    _setVirtualFaceButton((NSString *)GCInputButtonX, NO);
-    _setVirtualFaceButton((NSString *)GCInputButtonY, NO);
-    
-    _setVirtualNamedButton(NSSelectorFromString(@"leftShoulder"), NO);
-    _setVirtualNamedButton(NSSelectorFromString(@"rightShoulder"), NO);
-    _setVirtualNamedButton(NSSelectorFromString(@"leftTrigger"), NO);
-    _setVirtualNamedButton(NSSelectorFromString(@"rightTrigger"), NO);
-    _setVirtualFaceButton(@"Options", NO);
-    _setVirtualFaceButton(@"Menu", NO);
-    _setVirtualFaceButton(@"Home", NO);
-
-    dispatchControllerButton(FnCtrlL3,  NO, NO);
-    dispatchControllerButton(FnCtrlR3,  NO, NO);
+    memset(g_vctrlButtonTargetStates, 0, sizeof(g_vctrlButtonTargetStates));
+    memset(dpadState, 0, sizeof(dpadState));
+    memset(lstickState, 0, sizeof(lstickState));
+    memset(rstickState, 0, sizeof(rstickState));
+    memset(vctrlKeyState, 0, sizeof(vctrlKeyState));
+    ue_reset_gyro_context();
 }
 
-// Drive a shoulder or trigger button by its extendedGamepad property selector.
-// Uses the proven triple-fire approach: valueChangedHandler + pressedChangedHandler + _setValue:
-static void _setVirtualNamedButton(SEL propSel, BOOL pressed) {
-    float val = pressed ? 1.0f : 0.0f;
-    for (GCController *ctrl in GCController.controllers) {
-        GCExtendedGamepad *eg = ctrl.extendedGamepad;
-        if (!eg) continue;
-
-        GCControllerButtonInput *btn = nil;
-        
-        // 1. Try selector if provided
-        if (propSel && [eg respondsToSelector:propSel]) {
-            btn = ((id(*)(id,SEL))objc_msgSend)(eg, propSel);
-        }
-        
-        // 2. Fallback to elementForName if we can derive a name (e.g. for triggers/shoulders)
-        if (!btn && [eg respondsToSelector:@selector(elementForName:)]) {
-            NSString *selStr = NSStringFromSelector(propSel);
-            if ([selStr isEqualToString:@"leftShoulder"])  btn = (GCControllerButtonInput *)[(id)eg elementForName:@"Left Shoulder"];
-            if ([selStr isEqualToString:@"rightShoulder"]) btn = (GCControllerButtonInput *)[(id)eg elementForName:@"Right Shoulder"];
-            if ([selStr isEqualToString:@"leftTrigger"])   btn = (GCControllerButtonInput *)[(id)eg elementForName:@"Left Trigger"];
-            if ([selStr isEqualToString:@"rightTrigger"])  btn = (GCControllerButtonInput *)[(id)eg elementForName:@"Right Trigger"];
-        }
-
-        if (!btn || ![btn isKindOfClass:GCControllerButtonInput.class]) continue;
-        
-        // Elite Level 3: Zero-Overhead Injection (IMP Caching)
-        if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
-        if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-        
-        static SEL setValueSel = NULL;
-        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
-        
-        if ([btn respondsToSelector:setValueSel]) {
-            // Direct C-call to implementation pointer for absolute 0-delay.
-            vctrl_set_value_t imp = (vctrl_set_value_t)[btn methodForSelector:setValueSel];
-            if (imp) imp(btn, setValueSel, val);
-        }
+static void _setVirtualNamedButton(SEL selector, BOOL pressed) {
+    if (!isControllerModeEnabled || !g_virtualGamepad || !selector) return;
+    if ([g_virtualGamepad respondsToSelector:selector]) {
+        setVirtualButtonValue(((id (*)(id, SEL))objc_msgSend)(g_virtualGamepad, selector), pressed);
     }
+}
+
+// Virtual-controller lifecycle. All transitions and notifications run on main.
+static BOOL g_controllerLifecycleStarted = NO;
+static BOOL g_connectingVirtualController = NO;
+static BOOL g_wantsVirtualController = NO;
+static BOOL g_hasOtherControllers = NO;
+static BOOL g_virtualControllerConnected = NO;
+static NSUInteger g_controllerRevision = 0;
+static GCController *g_ownedController = nil;
+
+static void setVirtualControllerStatus(NSString *status) {
+    if ([g_virtualControllerStatus isEqualToString:status]) return;
+    g_virtualControllerStatus = status;
+    [[NSNotificationCenter defaultCenter] postNotificationName:FnVirtualControllerStatusDidChangeNotification object:nil];
+}
+
+static void clearVirtualControllerCache() {
+    isControllerModeEnabled = NO;
+    g_virtualGamepad = nil;
+    g_vctrl_cached_ls = nil;
+    g_vctrl_cached_rs = nil;
+    memset(g_vctrlButtonTargetStates, 0, sizeof(g_vctrlButtonTargetStates));
+    memset(vctrlKeyState, 0, sizeof(vctrlKeyState));
+    memset(dpadState, 0, sizeof(dpadState));
+    memset(lstickState, 0, sizeof(lstickState));
+    memset(rstickState, 0, sizeof(rstickState));
+    ue_reset_gyro_context();
+}
+
+BOOL fnShouldSynthesizeMouseMotion(void) {
+    // Do not replace device motion while another controller is in use, even in On mode.
+    return isControllerModeEnabled && !g_hasOtherControllers && !isTypingModeEnabled &&
+        !isPopupVisible && !isGCMouseDirectActive && (isMouseLocked || isTriggerHeld);
+}
+
+void fnRefreshVirtualController(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ fnRefreshVirtualController(); });
+        return;
+    }
+    if (!g_controllerLifecycleStarted) return;
+    if (@available(iOS 15, *)) {
+        GCVirtualController *virtualController = g_virtualController;
+        g_hasOtherControllers = NO;
+        for (GCController *controller in GCController.controllers) {
+            if (controller != virtualController.controller && controller != g_ownedController) {
+                g_hasOtherControllers = YES;
+                break;
+            }
+        }
+        BOOL desired = g_virtualControllerMode == FnVirtualControllerOn ||
+            (g_virtualControllerMode == FnVirtualControllerAuto && !g_hasOtherControllers);
+        if (desired != g_wantsVirtualController) {
+            g_wantsVirtualController = desired;
+            ++g_controllerRevision;
+        }
+        if (!desired) {
+            if (isControllerModeEnabled) resetControllerState();
+            clearVirtualControllerCache();
+            // A pending connect must finish before disconnecting/reconnecting.
+            // Its completion checks the revision before exposing any profile.
+            if (g_virtualControllerConnected && !g_connectingVirtualController) {
+                g_virtualControllerConnected = NO;
+                [virtualController disconnect];
+            }
+            setVirtualControllerStatus(g_virtualControllerMode == FnVirtualControllerOff
+                ? @"Off — using native game input" : @"Auto — physical controller connected");
+            return;
+        }
+        if (isControllerModeEnabled) {
+            setVirtualControllerStatus(g_virtualControllerMode == FnVirtualControllerAuto
+                ? @"Auto — virtual controller active" : @"On — virtual controller active");
+            return;
+        }
+        if (g_connectingVirtualController) return;
+        if (!virtualController) {
+            GCVirtualControllerConfiguration *configuration = [[GCVirtualControllerConfiguration alloc] init];
+            configuration.elements = [NSSet setWithObjects:GCInputLeftThumbstick, GCInputRightThumbstick,
+                GCInputButtonA, GCInputButtonB, GCInputButtonX, GCInputButtonY,
+                // Apple omits the D-pad when a left stick is configured. The
+                // dispatcher still supports profiles that expose a D-pad.
+                GCInputLeftShoulder, GCInputRightShoulder,
+                GCInputLeftTrigger, GCInputRightTrigger, nil];
+            configuration.hidden = YES;
+            virtualController = [GCVirtualController virtualControllerWithConfiguration:configuration];
+            g_virtualController = virtualController;
+        }
+        if (!virtualController) {
+            setVirtualControllerStatus(@"Virtual controller unavailable");
+            return;
+        }
+        g_connectingVirtualController = YES;
+        NSUInteger revision = g_controllerRevision;
+        setVirtualControllerStatus(@"Connecting virtual controller…");
+        [virtualController connectWithReplyHandler:^(NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                g_connectingVirtualController = NO;
+                if (revision != g_controllerRevision || !g_wantsVirtualController) {
+                    if (virtualController.controller) g_ownedController = virtualController.controller;
+                    g_virtualControllerConnected = NO;
+                    [virtualController disconnect];
+                    clearVirtualControllerCache();
+                    fnRefreshVirtualController();
+                    return;
+                }
+                GCController *controller = virtualController.controller;
+                if (controller) g_ownedController = controller;
+                GCExtendedGamepad *profile = controller.extendedGamepad;
+                if (error || !profile) {
+                    g_virtualControllerConnected = NO;
+                    [virtualController disconnect];
+                    clearVirtualControllerCache();
+                    setVirtualControllerStatus(error
+                        ? [@"Connection failed: " stringByAppendingString:error.localizedDescription]
+                        : @"Connection failed: gamepad unavailable");
+                    return;
+                }
+                g_ownedController = controller;
+                g_virtualControllerConnected = YES;
+                g_virtualGamepad = profile;
+                g_vctrl_cached_ls = profile.leftThumbstick;
+                g_vctrl_cached_rs = profile.rightThumbstick;
+                ue_reset_gyro_context();
+                isControllerModeEnabled = YES;
+                setVirtualControllerStatus(g_virtualControllerMode == FnVirtualControllerAuto
+                    ? @"Auto — virtual controller active" : @"On — virtual controller active");
+                // Recheck devices that arrived while connect was pending.
+                fnRefreshVirtualController();
+            });
+        }];
+    } else {
+        setVirtualControllerStatus(@"Virtual controller requires iOS 15 or later");
+    }
+}
+
+void fnSetVirtualControllerMode(FnVirtualControllerMode mode) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ fnSetVirtualControllerMode(mode); });
+        return;
+    }
+    if (mode < FnVirtualControllerAuto || mode > FnVirtualControllerOff) mode = FnVirtualControllerAuto;
+    g_virtualControllerMode = mode;
+    [tweakDefaults() setInteger:mode forKey:kVirtualControllerModeKey];
+    fnRefreshVirtualController();
+    [[NSNotificationCenter defaultCenter] postNotificationName:FnVirtualControllerStatusDidChangeNotification object:nil];
+}
+
+static void handleControllerNotification(NSNotification *notification) {
+    GCVirtualController *virtualController = g_virtualController;
+    BOOL owned = notification.object == g_ownedController ||
+        notification.object == virtualController.controller;
+    if (owned) {
+        if ([notification.name isEqualToString:GCControllerDidConnectNotification]) {
+            g_ownedController = notification.object;
+            return; // The asynchronous connect completion establishes readiness.
+        }
+        if (!g_virtualControllerConnected) return; // Expected disconnect; do not retry failures.
+        g_virtualControllerConnected = NO;
+        ++g_controllerRevision;
+        clearVirtualControllerCache();
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{ fnRefreshVirtualController(); });
 }
 
 // Synthesise a keyboard key event through storedKeyboardHandler.
@@ -964,7 +958,7 @@ static void _sendDualKeyEvent(GCKeyCode kc, BOOL pressed) {
 
 // ── L3/R3 Injection Helper ──────────────────────────────────────────────────
 static id getInjectedButton(GCExtendedGamepad *gamepad, NSString *key) {
-    if (!gamepad) return nil;
+    if (!gamepad || gamepad != ue_get_extended_gamepad(g_virtualController)) return nil;
     static char const * const kInjectedButtonsKey = "kInjectedButtonsKey";
     NSMutableDictionary *dict = objc_getAssociatedObject(gamepad, kInjectedButtonsKey);
     if (!dict) {
@@ -1001,7 +995,10 @@ static id getInjectedButton(GCExtendedGamepad *gamepad, NSString *key) {
 }
 
 - (void)_setValue:(float)v { 
+    float previousValue = self.value;
+    BOOL previousPressed = self.isPressed;
     BOOL pressed = (v > 0.5);
+    if (previousValue == v && previousPressed == pressed) return;
     
     // Performance: Skip KVO (willChangeValueForKey) for absolute 0-delay.
     // Most games use polling or handlers directly.
@@ -1010,55 +1007,23 @@ static id getInjectedButton(GCExtendedGamepad *gamepad, NSString *key) {
     
     // Trigger ALL possible registered blocks immediately
     if (self.valueChangedHandler)   self.valueChangedHandler(self, v, pressed);
-    if (self.pressedChangedHandler) self.pressedChangedHandler(self, v, pressed);
+    if (previousPressed != pressed && self.pressedChangedHandler) self.pressedChangedHandler(self, v, pressed);
 }
 %end
 
-static void ue_reflect_button_dispatch(NSInteger idx, BOOL pressed) {
-    if (!g_virtualGamepad) return;
-
-    GCControllerButtonInput *btn = nil;
-    switch (idx) {
-        case FnCtrlButtonA: btn = g_ghostCache.btnA; break;
-        case FnCtrlButtonB: btn = g_ghostCache.btnB; break;
-        case FnCtrlButtonX: btn = g_ghostCache.btnX; break;
-        case FnCtrlButtonY: btn = g_ghostCache.btnY; break;
-        case FnCtrlL1:      btn = g_ghostCache.l1;   break;
-        case FnCtrlR1:      btn = g_ghostCache.r1;   break;
-        case FnCtrlL2:      btn = g_ghostCache.l2;   break;
-        case FnCtrlR2:      btn = g_ghostCache.r2;   break;
-        case FnCtrlL3:      btn = g_ghostCache.l3;   break;
-        case FnCtrlR3:      btn = g_ghostCache.r3;   break;
-        case FnCtrlOptions: btn = g_ghostCache.menu; break;
-        case FnCtrlShare:   btn = g_ghostCache.options; break;
-        case FnCtrlHome:    btn = g_ghostCache.home; break;
-        default: break;
-    }
-
-    if (btn) {
-        float val = pressed ? 1.0f : 0.0f;
-        
-        // LEVEL 21: Ghost-Core IMP Dispatch (Zero-Wait)
-        static SEL setValueSel = NULL;
-        if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
-        
-        if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
-        if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-
-        if ([btn respondsToSelector:setValueSel]) {
-            typedef void (*SetValueFunc)(id, SEL, float);
-            ((SetValueFunc)objc_msgSend)(btn, setValueSel, val);
-        }
-    }
-}
-
 // Master dispatcher — routes FnControllerButton index to the right mechanism
 static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync) {
-    // LEVEL 20: Unified Hardware Dispatch (Zero-Scheduling Overhead)
-    if (idx >= 0 && idx < FnCtrlButtonCount) {
-        g_vctrlButtonTargetStates[idx] = pressed;
+    if (![NSThread isMainThread]) {
+        NSUInteger revision = g_controllerRevision;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (revision == g_controllerRevision) dispatchControllerButton(idx, pressed, isSync);
+        });
+        return;
     }
-    
+    if (!isControllerModeEnabled || !g_virtualGamepad || idx < 0 || idx >= FnCtrlButtonCount) return;
+    if (g_vctrlButtonTargetStates[idx] == pressed) return;
+    g_vctrlButtonTargetStates[idx] = pressed;
+
     // Process Sticks/Dpad state update immediately
     switch (idx) {
         case FnCtrlLeftStickUp:    lstickState[0] = pressed; _updateVStick(NO, YES);  break;
@@ -1079,19 +1044,8 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync) {
         // ── Stick clicks (L3/R3) ──────────────────────────────────────────
         case FnCtrlL3:
         case FnCtrlR3: {
-            GCControllerButtonInput *btn = (idx == FnCtrlL3) ? [g_virtualGamepad leftThumbstickButton] : [g_virtualGamepad rightThumbstickButton];
-            if (btn) {
-                float val = pressed ? 1.0f : 0.0f;
-                static SEL setValueSel = NULL;
-                if (!setValueSel) setValueSel = NSSelectorFromString(@"_setValue:");
-                if ([btn respondsToSelector:setValueSel]) {
-                    typedef void (*SetValueFunc)(id, SEL, float);
-                    ((SetValueFunc)objc_msgSend)(btn, setValueSel, val);
-                } else {
-                    if (btn.valueChangedHandler)   btn.valueChangedHandler(btn, val, pressed);
-                    if (btn.pressedChangedHandler) btn.pressedChangedHandler(btn, val, pressed);
-                }
-            }
+            SEL selector = idx == FnCtrlL3 ? @selector(leftThumbstickButton) : @selector(rightThumbstickButton);
+            _setVirtualNamedButton(selector, pressed);
             break;
         }
         case FnCtrlOptions: {
@@ -1138,14 +1092,9 @@ static void dispatchControllerButton(NSInteger idx, BOOL pressed, BOOL isSync) {
         if (dpadState[1]) dy -= 1.0f;
         if (dpadState[2]) dx -= 1.0f;
         if (dpadState[3]) dx += 1.0f;
-        for (GCController *ctrl in GCController.controllers) {
-            GCExtendedGamepad *eg = ctrl.extendedGamepad;
-            if (eg) ue_reflect_thumbstick(eg.dpad, dx, dy);
-        }
+        ue_reflect_thumbstick([g_virtualGamepad dpad], dx, dy);
     }
 
-    // Direct game engine reflection pulse
-    ue_reflect_button_dispatch(idx, pressed);
 }
 
 // ── Mapping Helpers ──────────────────────────────────────────────────────────
@@ -1900,6 +1849,13 @@ static void setupHIDManager() {
         }
     }
 
+    for (NSNotificationName name in @[GCControllerDidConnectNotification, GCControllerDidDisconnectNotification]) {
+        [[NSNotificationCenter defaultCenter] addObserverForName:name object:nil queue:[NSOperationQueue mainQueue]
+            usingBlock:^(NSNotification *notification) {
+                handleControllerNotification(notification);
+            }];
+    }
+
     // ── GCVirtualController — connect after UIKit is ready ───────────────────
     // Required for controller-mode button/stick/trigger dispatching.
     // cfg.elements must include every button we ever want to drive.
@@ -1920,49 +1876,11 @@ static void setupHIDManager() {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             if (@available(iOS 15, *)) {
-                GCVirtualControllerConfiguration *cfg =
-                    [[GCVirtualControllerConfiguration alloc] init];
-                // Only include elements GCVirtualController actually supports.
-                // Extra elements (shoulders, triggers, dpad, etc.) cause
-                // connectWithReplyHandler: to fail and g_virtualController.controller
-                // returns nil, breaking _setValue: on every button.
-                cfg.elements = [NSSet setWithObjects:
-                    GCInputLeftThumbstick,
-                    GCInputRightThumbstick,
-                    GCInputButtonA, GCInputButtonB,
-                    GCInputButtonX, GCInputButtonY,
-                    GCInputLeftShoulder,
-                    GCInputRightShoulder,
-                    GCInputLeftTrigger,
-                    GCInputRightTrigger,
-                    nil];
-                if ([cfg respondsToSelector:@selector(setHidden:)]) cfg.hidden = YES;
-                g_virtualController = [GCVirtualController virtualControllerWithConfiguration:cfg];
-                
-                // --- 120Hz SYNCED INJECTION ---
+                g_controllerLifecycleStarted = YES;
+                fnRefreshVirtualController();
                 g_inputPulseHelper = [[FnInputPulse alloc] init];
                 CADisplayLink *displayLink = [CADisplayLink displayLinkWithTarget:g_inputPulseHelper selector:@selector(onDisplayTick:)];
                 [displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
-
-                SEL connectSel = NSSelectorFromString(@"connectWithReplyHandler:");
-                void (^reply)(NSError *) = ^(NSError *error) {
-                    if (!error) {
-                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                            if (g_virtualController) {
-                                g_virtualGamepad = ue_get_extended_gamepad(g_virtualController);
-                                updateGhostCache(); // LEVEL 21: Ghost-Core Latch
-                                if (g_virtualGamepad) {
-                                    g_vctrl_cached_ls = [g_virtualGamepad leftThumbstick];
-                                    g_vctrl_cached_rs = [g_virtualGamepad rightThumbstick];
-                                    _updateVStick(NO, YES);
-                                    _updateVStick(YES, YES);
-                                }
-                            }
-                        });
-                    }
-                };
-                if ([g_virtualController respondsToSelector:connectSel])
-                    ((void(*)(id,SEL,id))objc_msgSend)(g_virtualController, connectSel, reply);
 
                 // --- STEALTH COMPOSITOR WINDOW (Level 5 Full-Screen Shield) ---
                 // Forces macOS to stay in Composited Mode even in Fullscreen
@@ -2114,8 +2032,9 @@ static void setupHIDManager() {
                         isMappedToController = YES;
                         if (isMouseLocked || isTriggerHeld) {
                              dispatchControllerButton(i, YES, NO);
+                             NSUInteger revision = g_controllerRevision;
                              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.015 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                                 dispatchControllerButton(i, NO, NO);
+                                 if (revision == g_controllerRevision) dispatchControllerButton(i, NO, NO);
                              });
                         }
                         mask &= ~(1 << i);
@@ -2288,7 +2207,7 @@ static void setupHIDManager() {
                         // Hardware controller mapping — O(1) BITMASK LOOKUP
                         if (isMouseLocked || isTriggerHeld || !isPressed) {
                             if (currentBtnCode > 0 && currentBtnCode < 10240) {
-                                uint32_t mask = g_vctrlReverseMap[currentBtnCode];
+                                uint32_t mask = g_vctrlReverseMap[currentBtnCode] | g_vctrlCustomMap[currentBtnCode];
                                 while (mask) {
                                     int i = __builtin_ctz(mask);
                                     dispatchControllerButton(i, isPressed, YES);
@@ -2477,12 +2396,8 @@ static void setupHIDManager() {
                         isMouseLocked = NO;
                         updateMouseLock(NO, warpPt);
                         
-                        // LEVEL 10: Mandatory State Flush on Unlock
-                        resetControllerState();
-                        
-                        // RE-ASSERTION: Force all held inputs back to 'Pressed' after the
-                        // mode switch to prevent the game engine from dropping them.
-                        reassertAllInputs();
+                        // Option temporarily unlocks the cursor; existing virtual
+                        // holds remain latched until their sources are released.
                     }
                 } else {
                     isTriggerHeld = NO;
@@ -2568,7 +2483,8 @@ static void setupHIDManager() {
             if (keyCode == 0) return event;
 
             // ── Hardened Suppression for Controller/Remap ───────────────────
-            BOOL isRemappedElsewhere = (keyCode < 10240 && g_vctrlSuppressionMap[keyCode]);
+            BOOL isRemappedElsewhere = (isControllerModeEnabled && !isTypingModeEnabled && keyCode < 10240 &&
+                (g_vctrlSuppressionMap[keyCode] || g_vctrlCustomMap[keyCode]));
 
             // PRIORITIZE CONTROLLER MODE: dispatch mapped controller button.
             if (isControllerModeEnabled && (isMouseLocked || isTriggerHeld || !pressed) && !isPopupVisible && keyCaptureCallback == nil) {
@@ -2970,6 +2886,7 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
 }
 
 - (id)_leftThumbstickButton {
+    if (self != ue_get_extended_gamepad(g_virtualController)) return [self leftThumbstickButton];
     if ([self respondsToSelector:@selector(leftThumbstickButton)]) {
         return [self leftThumbstickButton];
     }
@@ -2983,6 +2900,7 @@ static void updateMouseLock(BOOL value, CGPoint warpPos) {
 }
 
 - (id)_rightThumbstickButton {
+    if (self != ue_get_extended_gamepad(g_virtualController)) return [self rightThumbstickButton];
     if ([self respondsToSelector:@selector(rightThumbstickButton)]) {
         return [self rightThumbstickButton];
     }
@@ -3164,7 +3082,8 @@ static BOOL _isMouseButtonSuppressed(int code) {
 
     // 1. O(1) BITMASK SUPPRESSION CHECK (Hardware Look-up)
     // This handles all Controller Mode mappings (Level 3 Elite)
-    if (g_vctrlSuppressionMap[code]) return YES;
+    if (isControllerModeEnabled && !isTypingModeEnabled && !isPopupVisible &&
+        (g_vctrlSuppressionMap[code] || g_vctrlCustomMap[code])) return YES;
     
     // 2. Fortnite Tab Remapping (Key -> Default Key)
     if (fortniteRemapArray[code] != 0) return YES;
@@ -3417,7 +3336,7 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
                     if (isPressed && vctrlKeyState[currentBtnCode]) return event;
                     vctrlKeyState[currentBtnCode] = isPressed;
                     
-                    uint32_t mask = g_vctrlReverseMap[currentBtnCode];
+                    uint32_t mask = g_vctrlReverseMap[currentBtnCode] | g_vctrlCustomMap[currentBtnCode];
                     while (mask) {
                         int i = __builtin_ctz(mask);
                         if (isMouseLocked || !isPressed) {
@@ -3467,12 +3386,10 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
         // ── Controller mode remap (Key → Controller Button) ───────────
         // We handle this here to suppress the key if it's bound to a controller.
         // kbMonitor dispatches the controller button, so we only need to swallow.
-        if (isControllerModeEnabled && !isPopupVisible) {
-            for (int i = 0; i < FnCtrlButtonCount; i++) {
-                if (controllerMappingArray[i] == (int)keyCode) {
-                    return; // Swallow - this key is a controller button
-                }
-            }
+        if (isControllerModeEnabled && !isTypingModeEnabled && !isPopupVisible &&
+            (isMouseLocked || isTriggerHeld) && keyCode >= 0 && keyCode < 10240 &&
+            (g_vctrlReverseMap[keyCode] || g_vctrlCustomMap[keyCode])) {
+            return; // Only swallow while the virtual controller can accept this input.
         }
 
         // TWO-TIER REMAPPING SYSTEM (ULTRA-FAST):
@@ -3694,6 +3611,26 @@ static CGEventRef mouseButtonTapCallback(CGEventTapProxy proxy, CGEventType type
 }
 
 %end
+// Fortnite may establish its initial responder from its game thread. On Mac,
+// UIKit forwards that change to UINSWindowProxyFocusHelper, which asserts that
+// it runs on main. Marshal the entire responder change, preserving its result.
+static BOOL fnPerformResponderChangeOnMain(BOOL (^change)(void)) {
+    if ([NSThread isMainThread]) return change();
+    __block BOOL result = NO;
+    dispatch_sync(dispatch_get_main_queue(), ^{ result = change(); });
+    return result;
+}
+
+%hook UIResponder
+- (BOOL)becomeFirstResponder {
+    return fnPerformResponderChangeOnMain(^BOOL { return %orig; });
+}
+
+- (BOOL)resignFirstResponder {
+    return fnPerformResponderChangeOnMain(^BOOL { return %orig; });
+}
+%end
+
 %hook NSNotificationCenter
 - (void)postNotificationName:(NSNotificationName)aName object:(id)anObject userInfo:(NSDictionary *)aUserInfo {
     if ([aName isEqualToString:@"NSApplicationWillResignActiveNotification"] || 

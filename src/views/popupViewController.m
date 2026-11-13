@@ -1803,7 +1803,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   versionPill.layer.borderWidth = 0.5;
   versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
   UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
-  versionLabel.text = @"v4.0.0";
+  versionLabel.text = @"v6.0.0";
   versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
   versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
   versionLabel.textAlignment = NSTextAlignmentCenter;

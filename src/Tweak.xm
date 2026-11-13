@@ -1852,7 +1852,7 @@ static void setupHIDManager() {
     };
     rebind_symbols(rebindings, 17);
 
-    NSString* currentVersion = @"4.0.0";
+    NSString* currentVersion = @"6.0.0";
     NSString* lastVersion = [[NSUserDefaults standardUserDefaults] stringForKey:@"fnmactweak.lastSeenVersion"];
 
     if (!lastVersion || ![lastVersion isEqualToString:currentVersion]) {

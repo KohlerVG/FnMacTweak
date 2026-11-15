@@ -16,7 +16,19 @@ void ue_apply_gyro_velocity(double vx, double vy) {
 }
 
 #include <stdatomic.h>
-void ue_reset_gyro_context(void) {
+#import <os/lock.h>
+#import <mach/mach_time.h>
+
+static os_unfair_lock g_gyroContextLock = OS_UNFAIR_LOCK_INIT;
+static BOOL g_mouseMotionWasActive = NO;
+
+typedef CMRotationRate (*FnRotationRateIMP)(id, SEL);
+static FnRotationRateIMP orig_gc_rotationRate = NULL;
+static FnRotationRateIMP orig_manager_rotationRate = NULL;
+static FnRotationRateIMP orig_dm_rotationRate = NULL;
+
+// Called with g_gyroContextLock held so reset cannot race a motion sample.
+static void resetGyroContextLocked(void) {
     atomic_store(&g_lastGyroPollTime, 0);
     atomic_store(&mouseAccumBufferX[0], 0);
     atomic_store(&mouseAccumBufferX[1], 0);
@@ -25,184 +37,129 @@ void ue_reset_gyro_context(void) {
     atomic_store(&activeBufferIdx, 0);
     atomic_store(&mouseHardwareTimestamp[0], 0);
     atomic_store(&mouseHardwareTimestamp[1], 0);
+    atomic_store(&g_quantumPushedX, 0);
+    atomic_store(&g_quantumPushedY, 0);
 }
 
-// ---------------------------------------------------------------------------
-// CoreMotion Hooking (Method Swizzling)
-// ---------------------------------------------------------------------------
+void ue_reset_gyro_context(void) {
+    os_unfair_lock_lock(&g_gyroContextLock);
+    resetGyroContextLocked();
+    g_mouseMotionWasActive = NO;
+    os_unfair_lock_unlock(&g_gyroContextLock);
+}
 
-static CMRotationRate (*orig_rotationRate)(id, SEL) = NULL;
+static BOOL mouseMotionSynthesisIsActive(void) {
+    os_unfair_lock_lock(&g_gyroContextLock);
+    BOOL active = fnShouldSynthesizeMouseMotion();
+    if (!active && g_mouseMotionWasActive) {
+        resetGyroContextLocked();
+        g_mouseMotionWasActive = NO;
+    }
+    os_unfair_lock_unlock(&g_gyroContextLock);
+    return active;
+}
 
-static CMRotationRate hooked_rotationRate(id self, SEL _cmd) {
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ elevateThreadToRealTime(); });
-
-    // LEVEL 23: Mach-Time Pulse Alignment
-    uint64_t now_ticks = mach_absolute_time();
+static CMRotationRate sampleMouseRotationRate(void) {
+    CMRotationRate rate = {0, 0, 0};
     static mach_timebase_info_data_t timebase;
-    if (timebase.denom == 0) mach_timebase_info(&timebase);
-    
-    static uint64_t last_ticks = 0;
-    if (last_ticks == 0) last_ticks = now_ticks;
-    uint64_t delta_ticks = now_ticks - last_ticks;
-    last_ticks = now_ticks;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ mach_timebase_info(&timebase); });
 
-    double dt = (double)delta_ticks * (double)timebase.numer / (double)timebase.denom / 1000000000.0;
-
-    CMRotationRate rate;
-    if (isGCMouseDirectActive) {
-        rate.x = rate.y = rate.z = 0;
+    os_unfair_lock_lock(&g_gyroContextLock);
+    // Recheck after taking the lock: a disconnect or mode transition may have
+    // happened between the hook's eligibility check and this sample.
+    if (!fnShouldSynthesizeMouseMotion()) {
+        resetGyroContextLocked();
+        g_mouseMotionWasActive = NO;
+        os_unfair_lock_unlock(&g_gyroContextLock);
         return rate;
     }
 
-    // LEVEL 23: Motion-Flux (Jitter-Buster Engine)
+    uint64_t now = mach_absolute_time();
+    if (!g_mouseMotionWasActive) {
+        // Establish a fresh interval and discard motion collected while idle.
+        resetGyroContextLocked();
+        g_mouseMotionWasActive = YES;
+        atomic_store(&g_lastGyroPollTime, now);
+        os_unfair_lock_unlock(&g_gyroContextLock);
+        return rate;
+    }
+
+    uint64_t last = atomic_load(&g_lastGyroPollTime);
+    double dt = (double)(now - last) * (double)timebase.numer /
+                (double)timebase.denom / 1e9;
     if (dt > 0.0001) {
+        atomic_store(&g_lastGyroPollTime, now);
         int oldIdx = atomic_load(&activeBufferIdx);
-        int newIdx = 1 - oldIdx;
-        atomic_store(&activeBufferIdx, newIdx);
-        
+        atomic_store(&activeBufferIdx, 1 - oldIdx);
         double accX = atomic_exchange(&mouseAccumBufferX[oldIdx], 0.0);
         double accY = atomic_exchange(&mouseAccumBufferY[oldIdx], 0.0);
-
-        // LEVEL 24: Temporal Balancer (Absolute 0 Nullification)
-        // Subtract the amount we already 'pre-shot' into the mouse handler.
         double pushedX = atomic_exchange(&g_quantumPushedX, 0.0);
         double pushedY = atomic_exchange(&g_quantumPushedY, 0.0);
-        
-        // The 'Pull' amount is the remainder (Acc - Pushed)
-        // This ensures math stays 1:1 even with 100% instant push.
-        double balancedX = accX - pushedX;
-        double balancedY = accY - pushedY;
-
-        // Instant velocity using sub-millisecond precision
-        double rawVx = (balancedX * GYRO_SENSE * (GYRO_MULTIPLIER / 100.0)) / dt;
-        double rawVy = (balancedY * GYRO_SENSE * (GYRO_MULTIPLIER / 100.0)) / dt;
-        
-        // LEVEL 25: Apex-Raw (No Filtering)
-        rate.x = rawVx;
-        rate.y = rawVy;
-    } else {
-        rate.x = rate.y = 0;
+        double scale = GYRO_SENSE * (GYRO_MULTIPLIER / 100.0);
+        rate.x = (accX - pushedX) * scale / dt;
+        rate.y = (accY - pushedY) * scale / dt;
     }
-    rate.z = 0;
+    os_unfair_lock_unlock(&g_gyroContextLock);
     return rate;
 }
 
-// Hook for CMDeviceMotion.rotationRate
-static CMRotationRate hooked_dm_rotationRate(id self, SEL _cmd) {
-    return hooked_rotationRate(self, _cmd);
+static CMRotationRate originalRotationRate(FnRotationRateIMP original, id object, SEL selector) {
+    if (original) return original(object, selector);
+    CMRotationRate zero = {0, 0, 0};
+    return zero;
 }
 
-// Hook for startDeviceMotionUpdatesToQueue:withHandler:
-static void (*orig_startDeviceMotion)(id, SEL, NSOperationQueue*, CMDeviceMotionHandler) = NULL;
-static void hooked_startDeviceMotion(id self, SEL _cmd, NSOperationQueue* queue, CMDeviceMotionHandler handler) {
-    orig_startDeviceMotion(self, _cmd, queue, handler);
-}
-
-// LEVEL 27: God-Mode (Quantum Trajectory Predictor)
-// This implements a 0.2ms look-ahead to negate USB/OS bus latency.
-BOOL hooked_GetControllerOrientationAndPosition(int controllerId, FQuat *outOrientation, FVector *outPosition) {
-    if (!atomic_load(&g_godReflex.enabled)) return NO;
-    
-    // Harvest from the cache-aligned L1 block (globals.h)
-    float p = atomic_load(&g_godReflex.pitch);
-    float y = atomic_load(&g_godReflex.yaw);
-    float r = atomic_load(&g_godReflex.roll);
-    
-    // Quantum Trajectory: Predict where the mouse WILL be in 0.2ms.
-    // This cancels out the physical travel time through the OS/USB stack.
-    float lastP = atomic_load(&g_godReflex.lastPitch);
-    float lastY = atomic_load(&g_godReflex.lastYaw);
-    uint64_t lastT = atomic_load(&g_godReflex.lastTimestamp);
-    uint64_t nowT = mach_absolute_time();
-    
-    // Convert Mach-Ticks to float-seconds for velocity slope
-    static mach_timebase_info_data_t timebase;
-    if (timebase.denom == 0) mach_timebase_info(&timebase);
-    float dt = (float)(nowT - lastT) * (float)timebase.numer / (float)timebase.denom / 1e9f;
-    
-    if (dt > 0.0001f) {
-        float velocityP = (p - lastP) / dt;
-        float velocityY = (y - lastY) / dt;
-        
-        // Predict 0.2ms into the future (Quantum Shift)
-        p += (velocityP * 0.0002f);
-        y += (velocityY * 0.0002f);
+static CMRotationRate hooked_gc_rotationRate(id self, SEL _cmd) {
+    BOOL active = mouseMotionSynthesisIsActive();
+    id controller = nil;
+    if (g_virtualController && [g_virtualController respondsToSelector:@selector(controller)]) {
+        controller = [g_virtualController controller];
     }
-    
-    // Euler to Quaternion (Pre-Shifted Trajectory)
-    float sp = sinf(p * 0.5f); float cp = cosf(p * 0.5f);
-    float sy = sinf(y * 0.5f); float cy = cosf(y * 0.5f);
-    float sr = sinf(r * 0.5f); float cr = cosf(r * 0.5f);
-    
-    outOrientation->X = sr * cp * cy - cr * sp * sy;
-    outOrientation->Y = cr * sp * cy + sr * cp * sy;
-    outOrientation->Z = cr * cp * sy - sr * sp * cy;
-    outOrientation->W = cr * cp * cy + sr * sp * sy;
-    
-    return YES;
+    // Never replace motion supplied by a physical controller.
+    if (!active || !controller || self != [controller motion]) {
+        return originalRotationRate(orig_gc_rotationRate, self, _cmd);
+    }
+    return sampleMouseRotationRate();
 }
 
-/**
- * ue_init_gyro_hooks
- * 
- * Sets up the swizzles for GCMotion and CMMotionManager.
- * Hooking GCMotion is critical for modern UE/GameController parity.
- */
-#include "../lib/fishhook.h"
+static CMRotationRate hooked_manager_rotationRate(id self, SEL _cmd) {
+    if (!mouseMotionSynthesisIsActive()) {
+        return originalRotationRate(orig_manager_rotationRate, self, _cmd);
+    }
+    return sampleMouseRotationRate();
+}
+
+static CMRotationRate hooked_dm_rotationRate(id self, SEL _cmd) {
+    if (!mouseMotionSynthesisIsActive()) {
+        return originalRotationRate(orig_dm_rotationRate, self, _cmd);
+    }
+    return sampleMouseRotationRate();
+}
 
 void ue_init_gyro_hooks(void) {
-    // 1. Hook GCMotion (The Source of Truth for Virtual Controllers - Legacy Safety)
-    Class gcMotionCls = NSClassFromString(@"GCMotion");
-    if (gcMotionCls) {
-        Method m0 = class_getInstanceMethod(gcMotionCls, @selector(rotationRate));
-        if (m0) {
-            method_setImplementation(m0, (IMP)hooked_rotationRate);
-            NSLog(@"[FnMacTweak] Motion-Flux Activated: GCMotion Hooked (L23)");
-        }
-    }
-    
-    // 2. LEVEL 27: Activate God-Mode (Quantum-Reflex Binary Hook)
-    // We interpose the Unreal Engine's Motion Controller implementation.
-    struct rebinding rebindings[] = {
-        {"_ZN21FAppleControllerDevice32GetControllerOrientationAndPositionEiR5FQuatR7FVector", 
-         (void *)hooked_GetControllerOrientationAndPosition, 
-         NULL}
-    };
-    
-    if (rebind_symbols(rebindings, 1) == 0) {
-        atomic_store(&g_godReflex.enabled, YES);
-        NSLog(@"[FnMacTweak] God-Mode Activated: Quantum-Reflex Engaged! (L27)");
-    } else {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        // The old Unreal orientation interposition did not preserve its original
+        // implementation or identify the owned controller. Leave it native.
         atomic_store(&g_godReflex.enabled, NO);
-        NSLog(@"[FnMacTweak] God-Mode Warning: Final Singularity failed, falling back to legacy reflex.");
-    }
 
-    Class mgrCls = NSClassFromString(@"CMMotionManager");
-    if (mgrCls) {
-        // 2. Hook CMMotionManager.rotationRate (Polling raw)
-        Method m1 = class_getInstanceMethod(mgrCls, @selector(rotationRate));
-        if (m1) {
-            orig_rotationRate = (CMRotationRate (*)(id, SEL))method_getImplementation(m1);
-            method_setImplementation(m1, (IMP)hooked_rotationRate);
+        Method gcMethod = class_getInstanceMethod(NSClassFromString(@"GCMotion"), @selector(rotationRate));
+        if (gcMethod) {
+            orig_gc_rotationRate = (FnRotationRateIMP)method_getImplementation(gcMethod);
+            method_setImplementation(gcMethod, (IMP)hooked_gc_rotationRate);
         }
-
-        // 3. Hook CMMotionManager async start
-        Method m2 = class_getInstanceMethod(mgrCls, @selector(startDeviceMotionUpdatesToQueue:withHandler:));
-        if (m2) {
-            orig_startDeviceMotion = (void (*)(id, SEL, NSOperationQueue*, CMDeviceMotionHandler))method_getImplementation(m2);
-            method_setImplementation(m2, (IMP)hooked_startDeviceMotion);
+        Method managerMethod = class_getInstanceMethod(NSClassFromString(@"CMMotionManager"), @selector(rotationRate));
+        if (managerMethod) {
+            orig_manager_rotationRate = (FnRotationRateIMP)method_getImplementation(managerMethod);
+            method_setImplementation(managerMethod, (IMP)hooked_manager_rotationRate);
         }
-    }
-
-    Class dmCls = NSClassFromString(@"CMDeviceMotion");
-    if (dmCls) {
-        // 4. Hook CMDeviceMotion.rotationRate (Polling fused)
-        Method m3 = class_getInstanceMethod(dmCls, @selector(rotationRate));
-        if (m3) {
-            method_setImplementation(m3, (IMP)hooked_dm_rotationRate);
+        Method deviceMethod = class_getInstanceMethod(NSClassFromString(@"CMDeviceMotion"), @selector(rotationRate));
+        if (deviceMethod) {
+            orig_dm_rotationRate = (FnRotationRateIMP)method_getImplementation(deviceMethod);
+            method_setImplementation(deviceMethod, (IMP)hooked_dm_rotationRate);
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -49,7 +49,10 @@ BOOL leftButtonIsPressed = NO;
 BOOL rightButtonIsPressed = NO;
 BOOL middleButtonIsPressed = NO;
 id g_virtualController = nil;
-BOOL isControllerModeEnabled = YES;
+// Effective readiness, independent of the saved mode.
+BOOL isControllerModeEnabled = NO;
+FnVirtualControllerMode g_virtualControllerMode = FnVirtualControllerAuto;
+NSString *g_virtualControllerStatus = @"Waiting for game startup";
 FnGCMouseMovedHandler g_originalMouseHandler = nil;
 BOOL isTypingModeEnabled = NO;
 
@@ -228,7 +231,9 @@ void loadFortniteKeybinds() {
 }
 
 void loadControllerMappings(void) {
-    isControllerModeEnabled = YES;
+    NSInteger mode = [tweakDefaults() integerForKey:kVirtualControllerModeKey];
+    g_virtualControllerMode = (mode >= FnVirtualControllerAuto && mode <= FnVirtualControllerOff)
+        ? (FnVirtualControllerMode)mode : FnVirtualControllerAuto;
     memset(controllerMappingArray, 0, sizeof(controllerMappingArray));
     
     // Initialize with defaults
@@ -260,9 +265,9 @@ void loadControllerMappings(void) {
 
 void saveControllerMappings(void) {
     updateVCtrlReverseMap();
-    // Controller Mode is now always enabled
+    // Lifecycle readiness is managed separately from mappings.
     
-    // Save controller hardware mappings
+    // Save keyboard/mouse to controller mappings
     NSMutableDictionary *out = [NSMutableDictionary dictionary];
     for (int i = 0; i < FnCtrlButtonCount; i++) {
         int current = controllerMappingArray[i];

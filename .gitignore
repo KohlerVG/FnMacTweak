@@ -1,0 +1,6 @@
+.DS_Store
+.theos/
+debian-binary
+docs/
+packages/
+src/.DS_Store

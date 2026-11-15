@@ -16,7 +16,7 @@
 //  ⑤ popupViewController             — Main settings panel (all five tabs):
 //       • Sensitivity tab            — Hip-fire & ADS sensitivity, scale factor
 //       • Key Remap tab              — Fortnite action keybinds + custom remaps
-//       • Controller tab             — Physical hardware and virtual controller remapping
+//       • Controller tab             — Keyboard/mouse to virtual controller mappings
 //       • Container tab              — Fortnite data folder access,
 //       import/export • Quick Start tab            — Tutorial cards + video
 //       launch button
@@ -1666,6 +1666,9 @@ static NSString *getKeyName(GCKeyCode keyCode) {
 - (void)viewDidLoad {
   [super viewDidLoad];
   loadSettings();
+  [[NSNotificationCenter defaultCenter] addObserver:self
+      selector:@selector(refreshVirtualControllerStatus)
+      name:FnVirtualControllerStatusDidChangeNotification object:nil];
 
   self.keyRemapRows = [NSMutableArray array];
   self.isCapturingKey = NO;
@@ -1800,7 +1803,7 @@ static NSString *getKeyName(GCKeyCode keyCode) {
   versionPill.layer.borderWidth = 0.5;
   versionPill.layer.borderColor = [UIColor colorWithWhite:0.45 alpha:1.0].CGColor;
   UILabel *versionLabel = [[UILabel alloc] initWithFrame:versionPill.bounds];
-  versionLabel.text = @"v4.0.0";
+  versionLabel.text = @"v6.0.0";
   versionLabel.textColor = [UIColor colorWithWhite:0.72 alpha:1.0];
   versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightMedium];
   versionLabel.textAlignment = NSTextAlignmentCenter;
@@ -4211,6 +4214,17 @@ static NSString *getControllerButtonName(NSInteger idx) {
   return row;
 }
 
+- (void)refreshVirtualControllerStatus {
+  UISegmentedControl *mode = (UISegmentedControl *)[self.controllerTab viewWithTag:6250];
+  mode.selectedSegmentIndex = g_virtualControllerMode;
+  UILabel *status = (UILabel *)[self.controllerTab viewWithTag:6251];
+  status.text = g_virtualControllerStatus;
+}
+
+- (void)virtualControllerModeChanged:(UISegmentedControl *)sender {
+  fnSetVirtualControllerMode((FnVirtualControllerMode)sender.selectedSegmentIndex);
+}
+
 - (void)createControllerTab {
   self.controllerTab = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 330, 2000)];
 
@@ -4222,12 +4236,31 @@ static NSString *getControllerButtonName(NSInteger idx) {
   // ── Header ──────────────────────────────────────────────────────────────
   UILabel *title = [[UILabel alloc]
       initWithFrame:CGRectMake(leftMargin, y, contentWidth, 24)];
-  title.text = @"Controller Mapping";
+  title.text = @"Virtual Controller";
   title.textColor = [UIColor whiteColor];
   title.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
   title.textAlignment = NSTextAlignmentCenter;
   [self.controllerTab addSubview:title];
   y += 32;
+
+  UISegmentedControl *mode = [[UISegmentedControl alloc] initWithItems:@[@"Auto", @"On", @"Off"]];
+  mode.frame = CGRectMake(leftMargin, y, contentWidth, 32);
+  mode.tag = 6250;
+  mode.accessibilityLabel = @"Virtual Controller Mode";
+  [mode addTarget:self action:@selector(virtualControllerModeChanged:) forControlEvents:UIControlEventValueChanged];
+  [self.controllerTab addSubview:mode];
+  y += 38;
+
+  UILabel *status = [[UILabel alloc] initWithFrame:CGRectMake(leftMargin, y, contentWidth, 48)];
+  status.tag = 6251;
+  status.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
+  status.font = [UIFont systemFontOfSize:12];
+  status.numberOfLines = 3;
+  status.accessibilityTraits = UIAccessibilityTraitUpdatesFrequently;
+  [self.controllerTab addSubview:status];
+  y += 54;
+  [self refreshVirtualControllerStatus];
+
 
   // ── Description banner — same green style ────────────────────────────────
   UIView *banner = [[UIView alloc]
@@ -6350,7 +6383,9 @@ static void setShapeBorder(UIView *view, CGFloat radius, CGFloat width,
   NSDictionary *mouseFortniteBindings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:@"mouseFortniteBindings"];
   if (mouseFortniteBindings) exportData[@"mouseFortniteBindings"] = mouseFortniteBindings;
 
-  // Controller Hardware Mappings
+  exportData[@"virtualControllerMode"] = @(g_virtualControllerMode);
+
+  // Keyboard/mouse to controller mappings
   NSDictionary *ctrlMappings = [tweakDefaults() dictionaryForKey:kControllerMappingKey];
   if (ctrlMappings) exportData[@"controllerMappings"] = ctrlMappings;
 
@@ -6518,6 +6553,11 @@ static void setShapeBorder(UIView *view, CGFloat radius, CGFloat width,
         [[NSUserDefaults standardUserDefaults] setObject:importData[@"mouseFortniteBindings"] forKey:@"mouseFortniteBindings"];
       }
 
+      // Older backups default to Auto; invalid modes are normalized by the setter.
+      id importedMode = importData[@"virtualControllerMode"];
+      fnSetVirtualControllerMode([importedMode isKindOfClass:[NSNumber class]]
+          ? (FnVirtualControllerMode)[importedMode integerValue] : FnVirtualControllerAuto);
+
       // Apply Controller Settings
       if (importData[@"controllerMappings"]) {
         [tweakDefaults() setObject:importData[@"controllerMappings"] forKey:kControllerMappingKey];
@@ -6541,6 +6581,7 @@ static void setShapeBorder(UIView *view, CGFloat radius, CGFloat width,
       loadKeyRemappings();
       loadFortniteKeybinds();
       loadControllerMappings();
+      [self refreshVirtualControllerStatus];
       
       [self.stagedControllerMappings removeAllObjects];
       self.stagedVCtrlRemappings = [NSMutableArray arrayWithArray:vctrlRemappings ?: @[]];
